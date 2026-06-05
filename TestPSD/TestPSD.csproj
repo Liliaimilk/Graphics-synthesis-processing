@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net472</TargetFramework>
+    <AssemblyName>TestPSD</AssemblyName>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="Aspose.PSD">
+      <HintPath>..\WindowsFormsApp1\packages\Aspose.PSD\lib\net40\Aspose.PSD.dll</HintPath>
+    </Reference>
+  </ItemGroup>
+</Project>

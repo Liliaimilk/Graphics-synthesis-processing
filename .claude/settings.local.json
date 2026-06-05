@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(dotnet build *)",
+      "Bash(dotnet add *)",
+      "Bash(mkdir -p D:/C#/WindowsFormsApp1/packages)",
+      "Bash(curl -L -o libtiff.zip \"https://www.nuget.org/api/v2/package/BitMiracle.LibTiff.NET/5.1.291\")",
+      "Bash(taskkill *)",
+      "Bash(csc /reference:BitMiracle.LibTiff.NET.dll /out:debug_tiff.exe debug_tiff.cs)",
+      "Bash(dotnet run *)",
+      "Bash(unzip -o Aspose.PSD.24.8.0.nupkg -d packages/Aspose.PSD)"
+    ]
+  }
+}
