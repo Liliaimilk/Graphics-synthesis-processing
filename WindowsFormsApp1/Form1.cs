@@ -105,7 +105,7 @@ namespace WindowsFormsApp1
         private void SetupDarkTheme()
         {
             this.Text = "图片处理工具";
-            this.Size = new Size(1100, 850);
+            this.Size = new Size(1000, 650);
             this.StartPosition = FormStartPosition.CenterScreen;
             this.BackColor = Color.FromArgb(25, 35, 55);
             this.ForeColor = Color.FromArgb(220, 225, 235);
@@ -200,13 +200,13 @@ namespace WindowsFormsApp1
             cmbFormat.Items.AddRange(new object[] { "TIF", "PSD", "JPEG", "PNG" });
             cmbFormat.SelectedIndex = 0;
 
-            cmbRotation = CreateComboBox(startX + labelWidth + 240, startY - 3, 80);
-            cmbRotation.Items.AddRange(new object[] { "0°", "90°", "180°", "270°" });
-            cmbRotation.SelectedIndex = 0;
+            //cmbRotation = CreateComboBox(startX + labelWidth + 240, startY - 3, 80);
+            //cmbRotation.Items.AddRange(new object[] { "0°", "90°", "180°", "270°" });
+            //cmbRotation.SelectedIndex = 0;
 
-            cmbMirror = CreateComboBox(startX + labelWidth + 340, startY - 3, 100);
-            cmbMirror.Items.AddRange(new object[] { "无", "水平镜像", "垂直镜像" });
-            cmbMirror.SelectedIndex = 0;
+            //cmbMirror = CreateComboBox(startX + labelWidth + 340, startY - 3, 100);
+            //cmbMirror.Items.AddRange(new object[] { "无", "水平镜像", "垂直镜像" });
+            //cmbMirror.SelectedIndex = 0;
 
             startY += rowHeight + 20;
 
@@ -243,29 +243,29 @@ namespace WindowsFormsApp1
 
             startY += rowHeight + 15;
 
-            chkUseAspose = new CheckBox
-            {
-                Text = "使用 Aspose.PSD（图层模式）",
-                Location = new Point(startX, startY),
-                Size = new Size(220, 25),
-                ForeColor = Color.FromArgb(200, 205, 215),
-                BackColor = Color.Transparent,
-                Checked = true
-            };
-            chkUseAspose.CheckedChanged += (s, e) => { if (chkUseAspose.Checked) chkTifMode.Checked = false; };
+            //chkUseAspose = new CheckBox
+            //{
+            //    Text = "使用 Aspose.PSD（图层模式）",
+            //    Location = new Point(startX, startY),
+            //    Size = new Size(220, 25),
+            //    ForeColor = Color.FromArgb(200, 205, 215),
+            //    BackColor = Color.Transparent,
+            //    Checked = true
+            //};
+            //chkUseAspose.CheckedChanged += (s, e) => { if (chkUseAspose.Checked) chkTifMode.Checked = false; };
 
-            startY += rowHeight - 5;
+            //startY += rowHeight - 5;
 
-            chkTifMode = new CheckBox
-            {
-                Text = "tif模式",
-                Location = new Point(startX, startY),
-                Size = new Size(100, 25),
-                ForeColor = Color.FromArgb(200, 205, 215),
-                BackColor = Color.Transparent,
-                Checked = false
-            };
-            chkTifMode.CheckedChanged += (s, e) => { if (chkTifMode.Checked) chkUseAspose.Checked = false; };
+            //chkTifMode = new CheckBox
+            //{
+            //    Text = "tif模式",
+            //    Location = new Point(startX, startY),
+            //    Size = new Size(100, 25),
+            //    ForeColor = Color.FromArgb(200, 205, 215),
+            //    BackColor = Color.Transparent,
+            //    Checked = false
+            //};
+            //chkTifMode.CheckedChanged += (s, e) => { if (chkTifMode.Checked) chkUseAspose.Checked = false; };
 
             startY += rowHeight + 10;
             btnMerge = new Button
@@ -293,16 +293,16 @@ namespace WindowsFormsApp1
             };
 
             startY += rowHeight + 30;
-            lblPreview = CreateLabel("结果预览:", startX, startY, 100);
+            //lblPreview = CreateLabel("结果预览:", startX, startY, 100);
 
-            picResultPreview = new PictureBox
-            {
-                Location = new Point(startX, startY + 30),
-                Size = new Size(500, 350),
-                BackColor = Color.FromArgb(20, 28, 45),
-                SizeMode = PictureBoxSizeMode.Zoom,
-                BorderStyle = BorderStyle.FixedSingle
-            };
+            //picResultPreview = new PictureBox
+            //{
+            //    Location = new Point(startX, startY + 30),
+            //    Size = new Size(500, 350),
+            //    BackColor = Color.FromArgb(20, 28, 45),
+            //    SizeMode = PictureBoxSizeMode.Zoom,
+            //    BorderStyle = BorderStyle.FixedSingle
+            //};
 
             tabTemplateMerge.Controls.Add(lblTemplateFolder);
             tabTemplateMerge.Controls.Add(txtTemplateFolder);
@@ -520,40 +520,45 @@ namespace WindowsFormsApp1
                 Console.WriteLine($"模版路径名称：{templateFile}");
                 Console.WriteLine($"素材路径名称：{materialFile}");
 
-                if (chkTifMode.Checked)
-                {
-                    AsposePSDHelper.ProcessTifMode(
-                        templateFile,
-                        materialFile,
-                        outputFile,
-                        format,
-                        msg => { lblStatus.Text = msg; Application.DoEvents(); });
+               
+                //if (chkTifMode.Checked)
+                //{
+                AsposePSDHelper.ProcessTifMode(
+                    templateFile,
+                    materialFile,
+                    outputFile,
+                    format,
+                    msg => { lblStatus.Text = msg; Application.DoEvents(); },
+                    chkWhiteInk.Checked ? txtWhiteInkName.Text : null,
+                    chkVarnish.Checked ? txtVarnishName.Text : null);
 
-                    lblStatus.Text = "正在生成预览...";
-                    Application.DoEvents();
-                    Console.WriteLine($"输出路径名称：{outputFile}");
+                lblStatus.Text = "正在生成预览...";
+                Application.DoEvents();
+                Console.WriteLine($"输出路径名称：{outputFile}");
 
-                    lblStatus.Text = "完成！";
-                    MessageBox.Show($"TIF模式套图完成！\n保存路径: {outputFile}", "成功", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                }
-                else if (chkUseAspose.Checked)
-                {
-                    PSDAnalyzer.AnalyzeAndMatchLayer(templateFile, materialFile, outputFile,
-                        chkWhiteInk.Checked, chkVarnish.Checked,
-                        chkWhiteInk.Checked ? txtWhiteInkName.Text : null,
-                        chkVarnish.Checked ? txtVarnishName.Text : null);
+                lblStatus.Text = "完成！";
+                MessageBox.Show($"TIF模式套图完成！\n保存路径: {outputFile}", "成功", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                //}
+                //else if (chkUseAspose.Checked)
+                //{
+                // psd模式贴图
 
-                    lblStatus.Text = "正在生成预览...";
-                    Application.DoEvents();
-                    Console.WriteLine($"输出路径名称：{outputFile}");
+                //PSDAnalyzer.AnalyzeAndMatchLayer(templateFile, materialFile, outputFile,
+                //    chkWhiteInk.Checked, chkVarnish.Checked,
+                //    chkWhiteInk.Checked ? txtWhiteInkName.Text : null,
+                //    chkVarnish.Checked ? txtVarnishName.Text : null);
 
-                    lblStatus.Text = "完成！";
-                    MessageBox.Show($"套图完成！\n保存路径: {outputFile}", "成功", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                }
-                else
-                {
-                    MessageBox.Show("请选择一种处理模式", "提示", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                }
+                //lblStatus.Text = "正在生成预览...";
+                //Application.DoEvents();
+                //Console.WriteLine($"输出路径名称：{outputFile}");
+
+                //lblStatus.Text = "完成！";
+                //MessageBox.Show($"套图完成！\n保存路径: {outputFile}", "成功", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                //}
+                //else
+                //{
+                //    MessageBox.Show("请选择一种处理模式", "提示", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                //}
             }
             catch (Exception ex)
             {

@@ -7,6 +7,7 @@ using System.Drawing;
 using System.Drawing.Imaging;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Text;
 using Bitmap = System.Drawing.Bitmap;
 using Color = System.Drawing.Color;
 using Graphics = System.Drawing.Graphics;
@@ -54,6 +55,8 @@ namespace WindowsFormsApp1
             string outputPath,
             string format,
             Action<string> progressCallback,
+            string whiteInkChannelName = null,
+            string varnishChannelName = null,   
             int offsetX = 0,
             int offsetY = 0)
         {
@@ -92,7 +95,7 @@ namespace WindowsFormsApp1
                 using (var mergedBitmap = CreateBitmapFromArgbPixels(backgroundData.Width, backgroundData.Height, backgroundData.Pixels))
                 {
                     progressCallback?.Invoke("正在保存结果...");
-                    SaveMergedAsFormat(mergedBitmap, outputPath, format);
+                    SaveMergedAsFormat(mergedBitmap, outputPath, format, whiteInkChannelName, varnishChannelName);
                 }
 
                 progressCallback?.Invoke("完成");
@@ -663,7 +666,7 @@ namespace WindowsFormsApp1
             }
         }
 
-        private static void SaveMergedAsFormat(Bitmap bitmap, string outputPath, string format)
+        private static void SaveMergedAsFormat(Bitmap bitmap, string outputPath, string format, string whiteInkChannelName = null, string varnishChannelName = null)
         {
             if (bitmap == null)
                 throw new ArgumentNullException(nameof(bitmap));
@@ -685,10 +688,10 @@ namespace WindowsFormsApp1
                     break;
                 case "TIF":
                 case "TIFF":
-                    SaveAsTiffWithSpotChannels(bitmap, outputPath);
+                    SaveAsTiffWithSpotChannels(bitmap, outputPath, whiteInkChannelName, varnishChannelName);
                     break;
                 default:
-                    SaveAsTiffWithSpotChannels(bitmap, outputPath);
+                    SaveAsCmykTiff(bitmap, outputPath);
                     break;
             }
         }
@@ -698,7 +701,24 @@ namespace WindowsFormsApp1
             bitmap.Save(outputPath.Replace(".psd", ".png"), ImageFormat.Png);
         }
 
-        private static void SaveAsTiffWithSpotChannels(Bitmap bitmap, string outputPath)
+        private static void SaveAsTiffWithSpotChannels(Bitmap bitmap, string outputPath, string whiteInkChannelName = null, string varnishChannelName = null)
+        {
+            if (bitmap == null)
+                throw new ArgumentNullException(nameof(bitmap));
+
+            bool addWhiteInk = !string.IsNullOrWhiteSpace(whiteInkChannelName);
+            bool addVarnish = !string.IsNullOrWhiteSpace(varnishChannelName);
+
+            if (!addWhiteInk && !addVarnish)
+            {
+                SaveAsCmykTiff(bitmap, outputPath);
+                return;
+            }
+
+            SaveAsCmykTiffWithExtraChannels(bitmap, outputPath, addWhiteInk, addVarnish, whiteInkChannelName, varnishChannelName);
+        }
+
+        private static void SaveAsCmykTiff(Bitmap bitmap, string outputPath)
         {
             using (var ms = new MemoryStream())
             {
@@ -708,10 +728,204 @@ namespace WindowsFormsApp1
                 using (var image = new MagickImage(ms))
                 {
                     image.Alpha(AlphaOption.On);
+                    image.ColorSpace = ColorSpace.CMYK;
                     image.Format = MagickFormat.Tiff;
                     image.Write(outputPath);
                 }
             }
+        }
+
+        private static void SaveAsCmykTiffWithExtraChannels(Bitmap bitmap, string outputPath, bool addWhiteInk, bool addVarnish, string whiteInkChannelName, string varnishChannelName)
+        {
+            int width = bitmap.Width;
+            int height = bitmap.Height;
+            var sourceData = ExtractPixelData(bitmap);
+
+            bool hasTransparency = false;
+            for (int i = 0; i < sourceData.Pixels.Length; i++)
+            {
+                if (((sourceData.Pixels[i] >> 24) & 0xFF) < 255)
+                {
+                    hasTransparency = true;
+                    break;
+                }
+            }
+
+            int placeholderChannelCount = (addWhiteInk ? 1 : 0) + (addVarnish ? 1 : 0);
+            int extraSampleCount = placeholderChannelCount + (hasTransparency ? 1 : 0);
+            int totalSamples = 4 + extraSampleCount;
+            var placeholderChannelNames = new List<string>();
+            if (addWhiteInk)
+                placeholderChannelNames.Add(whiteInkChannelName);
+            if (addVarnish)
+                placeholderChannelNames.Add(varnishChannelName);
+
+            using (var ms = new MemoryStream())
+            {
+                bitmap.Save(ms, ImageFormat.Png);
+                ms.Position = 0;
+
+                using (var image = new MagickImage(ms))
+                {
+                    image.Alpha(AlphaOption.Remove);
+                    image.ColorSpace = ColorSpace.CMYK;
+
+                    var pixels = image.GetPixels();
+                    using (Tiff tif = Tiff.Open(outputPath, "w"))
+                    {
+                        tif.SetField(TiffTag.IMAGEWIDTH, width);
+                        tif.SetField(TiffTag.IMAGELENGTH, height);
+                        tif.SetField(TiffTag.SAMPLESPERPIXEL, totalSamples);
+                        tif.SetField(TiffTag.BITSPERSAMPLE, 8);
+                        tif.SetField(TiffTag.ORIENTATION, Orientation.TOPLEFT);
+                        tif.SetField(TiffTag.PHOTOMETRIC, Photometric.SEPARATED);
+                        tif.SetField(TiffTag.INKSET, InkSet.CMYK);
+                        tif.SetField(TiffTag.PLANARCONFIG, PlanarConfig.CONTIG);
+                        tif.SetField(TiffTag.COMPRESSION, Compression.LZW);
+                        tif.SetField(TiffTag.RESOLUTIONUNIT, 2);
+                        tif.SetField(TiffTag.XRESOLUTION, 300.0);
+                        tif.SetField(TiffTag.YRESOLUTION, 300.0);
+                        tif.SetField(TiffTag.ROWSPERSTRIP, height);
+                        tif.SetField(TiffTag.IMAGEDESCRIPTION,
+                            $"Placeholder TIFF extra channels: {string.Join(", ", placeholderChannelNames)}");
+
+                        var photoshopChannelNames = new List<string>();
+                        if (hasTransparency)
+                            photoshopChannelNames.Add("Alpha");
+                        photoshopChannelNames.AddRange(placeholderChannelNames);
+                        TryWritePhotoshopChannelNames(tif, photoshopChannelNames);
+
+                        if (extraSampleCount > 0)
+                        {
+                            short[] extraSamples = new short[extraSampleCount];
+                            int extraIndex = 0;
+                            if (hasTransparency)
+                                extraSamples[extraIndex++] = (short)ExtraSample.UNASSALPHA;
+
+                            while (extraIndex < extraSampleCount)
+                                extraSamples[extraIndex++] = (short)ExtraSample.UNSPECIFIED;
+
+                            tif.SetField(TiffTag.EXTRASAMPLES, extraSampleCount, extraSamples);
+                        }
+
+                        var scanline = new byte[width * totalSamples];
+                        for (int y = 0; y < height; y++)
+                        {
+                            int sourceRow = y * width;
+                            for (int x = 0; x < width; x++)
+                            {
+                                int pixelIndex = sourceRow + x;
+                                int destIdx = x * totalSamples;
+                                var pixel = pixels.GetPixel(x, y);
+                                byte alpha = (byte)((sourceData.Pixels[pixelIndex] >> 24) & 0xFF);
+                                byte placeholderValue = alpha;
+
+                                scanline[destIdx + 0] = pixel.GetChannel(0);
+                                scanline[destIdx + 1] = pixel.GetChannel(1);
+                                scanline[destIdx + 2] = pixel.GetChannel(2);
+                                scanline[destIdx + 3] = pixel.GetChannel(3);
+
+                                int extraChannelIndex = 4;
+                                if (hasTransparency)
+                                    scanline[destIdx + extraChannelIndex++] = alpha;
+
+                                if (addWhiteInk)
+                                    scanline[destIdx + extraChannelIndex++] = placeholderValue;
+
+                                if (addVarnish)
+                                    scanline[destIdx + extraChannelIndex++] = placeholderValue;
+                            }
+
+                            tif.WriteScanline(scanline, y);
+                        }
+                    }
+                }
+            }
+
+            Console.WriteLine($"已输出占位双通道 TIFF: White={whiteInkChannelName}, Varnish={varnishChannelName}{(hasTransparency ? "，并保留透明通道" : string.Empty)}");
+        }
+
+        private static void TryWritePhotoshopChannelNames(Tiff tif, List<string> extraChannelNames)
+        {
+            if (tif == null || extraChannelNames == null || extraChannelNames.Count == 0)
+                return;
+
+            try
+            {
+                byte[] imageResourceBlock = BuildPhotoshopImageResourceBlock(extraChannelNames);
+                if (imageResourceBlock.Length > 0)
+                    tif.SetField((TiffTag)34377, imageResourceBlock.Length, imageResourceBlock);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"写入 Photoshop 通道名称资源失败，继续输出 TIFF: {ex.Message}");
+            }
+        }
+
+        private static byte[] BuildPhotoshopImageResourceBlock(List<string> extraChannelNames)
+        {
+            var block = new List<byte>();
+            block.AddRange(BuildPascalChannelNamesResource(extraChannelNames));
+            block.AddRange(BuildUnicodeChannelNamesResource(extraChannelNames));
+            return block.ToArray();
+        }
+
+        private static byte[] BuildPascalChannelNamesResource(List<string> extraChannelNames)
+        {
+            var data = new List<byte>();
+            foreach (string name in extraChannelNames)
+            {
+                string channelName = name ?? string.Empty;
+                byte[] nameBytes = Encoding.Default.GetBytes(channelName);
+                if (nameBytes.Length > 255)
+                    throw new InvalidOperationException($"通道名称过长: {channelName}");
+
+                data.Add((byte)nameBytes.Length);
+                data.AddRange(nameBytes);
+            }
+
+            return BuildPhotoshopResourceBlock(0x03EE, data);
+        }
+
+        private static byte[] BuildUnicodeChannelNamesResource(List<string> extraChannelNames)
+        {
+            var data = new List<byte>();
+            foreach (string name in extraChannelNames)
+            {
+                string channelName = name ?? string.Empty;
+                byte[] nameBytes = Encoding.BigEndianUnicode.GetBytes(channelName);
+                int charCount = channelName.Length;
+
+                data.Add((byte)((charCount >> 24) & 0xFF));
+                data.Add((byte)((charCount >> 16) & 0xFF));
+                data.Add((byte)((charCount >> 8) & 0xFF));
+                data.Add((byte)(charCount & 0xFF));
+                data.AddRange(nameBytes);
+            }
+
+            return BuildPhotoshopResourceBlock(0x0415, data);
+        }
+
+        private static byte[] BuildPhotoshopResourceBlock(int resourceId, List<byte> data)
+        {
+            var block = new List<byte>();
+            block.AddRange(new byte[] { (byte)'8', (byte)'B', (byte)'I', (byte)'M' });
+            block.Add((byte)((resourceId >> 8) & 0xFF));
+            block.Add((byte)(resourceId & 0xFF));
+            block.Add(0x00);
+            if ((block.Count % 2) != 0)
+                block.Add(0x00);
+
+            int length = data.Count;
+            block.Add((byte)((length >> 24) & 0xFF));
+            block.Add((byte)((length >> 16) & 0xFF));
+            block.Add((byte)((length >> 8) & 0xFF));
+            block.Add((byte)(length & 0xFF));
+            block.AddRange(data);
+            if ((data.Count % 2) != 0)
+                block.Add(0x00);
+
+            return block.ToArray();
         }
 
         private static ImageCodecInfo GetEncoder(ImageFormat format)
