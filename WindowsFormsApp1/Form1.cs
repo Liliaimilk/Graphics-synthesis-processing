@@ -42,8 +42,9 @@ namespace WindowsFormsApp1
 
         private CheckBox chkWhiteInk;
         private CheckBox chkVarnish;
-        private TextBox txtWhiteInkName;
-        private TextBox txtVarnishName;
+        
+        // private TextBox txtWhiteInkName;
+        // private TextBox txtVarnishName;
 
         private CheckBox chkUseAspose;
         private CheckBox chkTifMode;
@@ -225,8 +226,8 @@ namespace WindowsFormsApp1
                 Checked = true
             };
 
-            txtWhiteInkName = CreateTextBox(startX + labelWidth + 110, startY - 3, 150);
-            txtWhiteInkName.Text = "White";
+            // txtWhiteInkName = CreateTextBox(startX + labelWidth + 110, startY - 3, 150);
+            // txtWhiteInkName.Text = "White";
 
             chkVarnish = new CheckBox
             {
@@ -238,8 +239,8 @@ namespace WindowsFormsApp1
                 Checked = true
             };
 
-            txtVarnishName = CreateTextBox(startX + labelWidth + 370, startY - 3, 150);
-            txtVarnishName.Text = "Varnish";
+            // txtVarnishName = CreateTextBox(startX + labelWidth + 370, startY - 3, 150);
+            // txtVarnishName.Text = "Varnish";
 
             startY += rowHeight + 15;
 
@@ -320,9 +321,9 @@ namespace WindowsFormsApp1
             tabTemplateMerge.Controls.Add(cmbMirror);
             tabTemplateMerge.Controls.Add(lblSpotTitle);
             tabTemplateMerge.Controls.Add(chkWhiteInk);
-            tabTemplateMerge.Controls.Add(txtWhiteInkName);
+            // tabTemplateMerge.Controls.Add(txtWhiteInkName);
             tabTemplateMerge.Controls.Add(chkVarnish);
-            tabTemplateMerge.Controls.Add(txtVarnishName);
+            // tabTemplateMerge.Controls.Add(txtVarnishName);
             tabTemplateMerge.Controls.Add(chkUseAspose);
             tabTemplateMerge.Controls.Add(chkTifMode);
             tabTemplateMerge.Controls.Add(btnMerge);
@@ -529,8 +530,8 @@ namespace WindowsFormsApp1
                     outputFile,
                     format,
                     msg => { lblStatus.Text = msg; Application.DoEvents(); },
-                    chkWhiteInk.Checked ? txtWhiteInkName.Text : null,
-                    chkVarnish.Checked ? txtVarnishName.Text : null);
+                    chkWhiteInk.Checked ? "White" : null,
+                    chkVarnish.Checked ? "Varnish" : null);
 
                 lblStatus.Text = "正在生成预览...";
                 Application.DoEvents();
