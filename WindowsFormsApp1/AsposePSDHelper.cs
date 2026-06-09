@@ -19,6 +19,12 @@ using Rectangle = System.Drawing.Rectangle;
 
 namespace WindowsFormsApp1
 {
+    public enum TemplateCompositeMode
+    {
+        Standard,
+        FullBleed
+    }
+
     public static class AsposePSDHelper
     {
         private sealed class ImagePixelData
@@ -56,9 +62,10 @@ namespace WindowsFormsApp1
             string format,
             Action<string> progressCallback,
             string whiteInkChannelName = null,
-            string varnishChannelName = null,   
+            string varnishChannelName = null,
             int offsetX = 0,
-            int offsetY = 0)
+            int offsetY = 0,
+            TemplateCompositeMode compositeMode = TemplateCompositeMode.Standard)
         {
             try
             {
@@ -88,9 +95,23 @@ namespace WindowsFormsApp1
                     Console.WriteLine("警告: 素材读取后非透明区域等于整张画布，说明 TIFF 透明信息可能已在读取阶段丢失。");
                 }
 
-                progressCallback?.Invoke("正在合成图像...");
-                Console.WriteLine($"素材贴图偏移: offsetX={offsetX}, offsetY={offsetY}");
-                DrawNonTransparentPixels(backgroundData, foregroundData, opaqueBounds, offsetX, offsetY);
+                progressCallback?.Invoke(compositeMode == TemplateCompositeMode.FullBleed ? "正在满版合成图像..." : "正在标准套图合成图像...");
+                if (compositeMode == TemplateCompositeMode.FullBleed)
+                {
+                    var templateBounds = GetOpaqueBounds(backgroundData.Pixels, backgroundData.Width, backgroundData.Height);
+                    Console.WriteLine($"模板手机壳区域: X={templateBounds.X}, Y={templateBounds.Y}, W={templateBounds.Width}, H={templateBounds.Height}");
+                    if (templateBounds == Rectangle.Empty)
+                        throw new InvalidOperationException("模板没有可用于满版模式的非透明手机壳区域");
+                    if (templateBounds.Width == backgroundData.Width && templateBounds.Height == backgroundData.Height)
+                        Console.WriteLine("警告: 模板非透明区域等于整张画布，满版模式会铺满整张画布。请确认模板透明信息是否读取正确。");
+
+                    DrawFullBleedPixels(backgroundData, foregroundData, templateBounds, opaqueBounds);
+                }
+                else
+                {
+                    Console.WriteLine($"素材贴图偏移: offsetX={offsetX}, offsetY={offsetY}");
+                    DrawNonTransparentPixels(backgroundData, foregroundData, opaqueBounds, offsetX, offsetY);
+                }
 
                 using (var mergedBitmap = CreateBitmapFromArgbPixels(backgroundData.Width, backgroundData.Height, backgroundData.Pixels))
                 {
@@ -446,6 +467,70 @@ namespace WindowsFormsApp1
                     int backgroundIndex = backgroundRow + destX;
                     int foregroundIndex = foregroundRow + sourceX;
                     BlendPixel(background.Pixels, backgroundIndex, foreground.Pixels[foregroundIndex]);
+                }
+            }
+        }
+
+        private static void DrawFullBleedPixels(
+            ImagePixelData background,
+            ImagePixelData foreground,
+            Rectangle templateBounds,
+            Rectangle materialBounds)
+        {
+            if (background == null)
+                throw new ArgumentNullException(nameof(background));
+            if (foreground == null)
+                throw new ArgumentNullException(nameof(foreground));
+            if (templateBounds == Rectangle.Empty || materialBounds == Rectangle.Empty)
+                return;
+
+            float scale = Math.Max(
+                (float)templateBounds.Width / materialBounds.Width,
+                (float)templateBounds.Height / materialBounds.Height);
+
+            int scaledWidth = (int)Math.Ceiling(materialBounds.Width * scale);
+            int scaledHeight = (int)Math.Ceiling(materialBounds.Height * scale);
+            float drawLeft = templateBounds.Left + (templateBounds.Width - scaledWidth) / 2f;
+            float drawTop = templateBounds.Top + (templateBounds.Height - scaledHeight) / 2f;
+
+            for (int destY = templateBounds.Top; destY < templateBounds.Bottom; destY++)
+            {
+                if (destY < 0 || destY >= background.Height)
+                    continue;
+
+                int backgroundRow = destY * background.Width;
+                for (int destX = templateBounds.Left; destX < templateBounds.Right; destX++)
+                {
+                    if (destX < 0 || destX >= background.Width)
+                        continue;
+
+                    int backgroundIndex = backgroundRow + destX;
+                    byte templateAlpha = (byte)((background.Pixels[backgroundIndex] >> 24) & 0xFF);
+                    if (templateAlpha == 0)
+                        continue;
+
+                    int sourceX = materialBounds.Left + (int)Math.Floor((destX - drawLeft) / scale);
+                    int sourceY = materialBounds.Top + (int)Math.Floor((destY - drawTop) / scale);
+                    if (sourceX < materialBounds.Left || sourceX >= materialBounds.Right ||
+                        sourceY < materialBounds.Top || sourceY >= materialBounds.Bottom ||
+                        sourceX < 0 || sourceX >= foreground.Width ||
+                        sourceY < 0 || sourceY >= foreground.Height)
+                    {
+                        continue;
+                    }
+
+                    int sourcePixel = foreground.Pixels[sourceY * foreground.Width + sourceX];
+                    byte sourceAlpha = (byte)((sourcePixel >> 24) & 0xFF);
+                    if (sourceAlpha == 0)
+                        continue;
+
+                    if (templateAlpha < 255)
+                    {
+                        int adjustedAlpha = sourceAlpha * templateAlpha / 255;
+                        sourcePixel = (sourcePixel & 0x00FFFFFF) | (adjustedAlpha << 24);
+                    }
+
+                    BlendPixel(background.Pixels, backgroundIndex, sourcePixel);
                 }
             }
         }

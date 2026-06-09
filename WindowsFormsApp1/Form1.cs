@@ -37,21 +37,16 @@ namespace WindowsFormsApp1
         private Label lblSeparator;
         private TextBox txtSeparator;
         private ComboBox cmbFormat;
-        private ComboBox cmbRotation;
-        private ComboBox cmbMirror;
+        private ComboBox cmbCompositeMode;
 
         private CheckBox chkWhiteInk;
         private CheckBox chkVarnish;
-        
+
         // private TextBox txtWhiteInkName;
         // private TextBox txtVarnishName;
 
-        private CheckBox chkUseAspose;
-        private CheckBox chkTifMode;
-
         private Button btnMerge;
         private PictureBox picResultPreview;
-        private Label lblPreview;
         private Label lblStatus;
 
         private Label lblLayoutInfo;
@@ -201,6 +196,10 @@ namespace WindowsFormsApp1
             cmbFormat.Items.AddRange(new object[] { "TIF", "PSD", "JPEG", "PNG" });
             cmbFormat.SelectedIndex = 0;
 
+            cmbCompositeMode = CreateComboBox(startX + labelWidth + 240, startY - 3, 140);
+            cmbCompositeMode.Items.AddRange(new object[] { "套图标准模式", "满版模式" });
+            cmbCompositeMode.SelectedIndex = 0;
+
             //cmbRotation = CreateComboBox(startX + labelWidth + 240, startY - 3, 80);
             //cmbRotation.Items.AddRange(new object[] { "0°", "90°", "180°", "270°" });
             //cmbRotation.SelectedIndex = 0;
@@ -317,19 +316,14 @@ namespace WindowsFormsApp1
             tabTemplateMerge.Controls.Add(lblSeparator);
             tabTemplateMerge.Controls.Add(txtSeparator);
             tabTemplateMerge.Controls.Add(cmbFormat);
-            tabTemplateMerge.Controls.Add(cmbRotation);
-            tabTemplateMerge.Controls.Add(cmbMirror);
+            tabTemplateMerge.Controls.Add(cmbCompositeMode);
             tabTemplateMerge.Controls.Add(lblSpotTitle);
             tabTemplateMerge.Controls.Add(chkWhiteInk);
             // tabTemplateMerge.Controls.Add(txtWhiteInkName);
             tabTemplateMerge.Controls.Add(chkVarnish);
             // tabTemplateMerge.Controls.Add(txtVarnishName);
-            tabTemplateMerge.Controls.Add(chkUseAspose);
-            tabTemplateMerge.Controls.Add(chkTifMode);
             tabTemplateMerge.Controls.Add(btnMerge);
             tabTemplateMerge.Controls.Add(lblStatus);
-            tabTemplateMerge.Controls.Add(lblPreview);
-            tabTemplateMerge.Controls.Add(picResultPreview);
         }
 
         private void SetupLayoutTab()
@@ -509,6 +503,10 @@ namespace WindowsFormsApp1
                 string separator = txtSeparator.Text;
                 if (string.IsNullOrEmpty(separator)) separator = "-";
                 string format = cmbFormat.SelectedItem?.ToString() ?? "TIF";
+                TemplateCompositeMode compositeMode = cmbCompositeMode.SelectedIndex == 1
+                    ? TemplateCompositeMode.FullBleed
+                    : TemplateCompositeMode.Standard;
+                string compositeModeName = cmbCompositeMode.SelectedItem?.ToString() ?? "套图标准模式";
                 string ext = format.ToLower() == "jpeg" || format.ToLower() == "jpg" ? ".jpg" :
                              format.ToLower() == "png" ? ".png" :
                              format.ToLower() == "psd" ? ".psd" : ".tif";
@@ -524,6 +522,8 @@ namespace WindowsFormsApp1
                
                 //if (chkTifMode.Checked)
                 //{
+                Console.WriteLine($"套图模式：{compositeModeName}");
+
                 AsposePSDHelper.ProcessTifMode(
                     templateFile,
                     materialFile,
@@ -531,14 +531,17 @@ namespace WindowsFormsApp1
                     format,
                     msg => { lblStatus.Text = msg; Application.DoEvents(); },
                     chkWhiteInk.Checked ? "White" : null,
-                    chkVarnish.Checked ? "Varnish" : null);
+                    chkVarnish.Checked ? "Varnish" : null,
+                    0,
+                    0,
+                    compositeMode);
 
                 lblStatus.Text = "正在生成预览...";
                 Application.DoEvents();
                 Console.WriteLine($"输出路径名称：{outputFile}");
 
                 lblStatus.Text = "完成！";
-                MessageBox.Show($"TIF模式套图完成！\n保存路径: {outputFile}", "成功", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                MessageBox.Show($"{compositeModeName}完成！\n保存路径: {outputFile}", "成功", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 //}
                 //else if (chkUseAspose.Checked)
                 //{
