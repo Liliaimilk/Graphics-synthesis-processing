@@ -65,7 +65,8 @@ namespace WindowsFormsApp1
             string varnishChannelName = null,
             int offsetX = 0,
             int offsetY = 0,
-            TemplateCompositeMode compositeMode = TemplateCompositeMode.Standard)
+            TemplateCompositeMode compositeMode = TemplateCompositeMode.Standard,
+            string exclusionMaskPath = null)
         {
             try
             {
@@ -74,6 +75,15 @@ namespace WindowsFormsApp1
 
                 progressCallback?.Invoke("正在读取素材...");
                 var foregroundData = LoadImagePixelData(materialTifPath);
+
+                ImagePixelData exclusionMaskData = null;
+                if (compositeMode == TemplateCompositeMode.FullBleed && !string.IsNullOrWhiteSpace(exclusionMaskPath))
+                {
+                    progressCallback?.Invoke("正在读取摄像头遮罩...");
+                    exclusionMaskData = LoadImagePixelData(exclusionMaskPath);
+                    Console.WriteLine($"摄像头遮罩路径: {exclusionMaskPath}");
+                    Console.WriteLine($"摄像头遮罩尺寸: W={exclusionMaskData.Width}, H={exclusionMaskData.Height}");
+                }
 
                 var opaqueBounds = GetOpaqueBounds(foregroundData.Pixels, foregroundData.Width, foregroundData.Height);
                 int opaquePixels = CountOpaquePixels(foregroundData.Pixels);
@@ -105,7 +115,7 @@ namespace WindowsFormsApp1
                     if (templateBounds.Width == backgroundData.Width && templateBounds.Height == backgroundData.Height)
                         Console.WriteLine("警告: 模板非透明区域等于整张画布，满版模式会铺满整张画布。请确认模板透明信息是否读取正确。");
 
-                    DrawFullBleedPixels(backgroundData, foregroundData, templateBounds, opaqueBounds);
+                    DrawFullBleedPixels(backgroundData, foregroundData, templateBounds, opaqueBounds, exclusionMaskData);
                 }
                 else
                 {
@@ -475,7 +485,8 @@ namespace WindowsFormsApp1
             ImagePixelData background,
             ImagePixelData foreground,
             Rectangle templateBounds,
-            Rectangle materialBounds)
+            Rectangle materialBounds,
+            ImagePixelData exclusionMask)
         {
             if (background == null)
                 throw new ArgumentNullException(nameof(background));
@@ -502,6 +513,9 @@ namespace WindowsFormsApp1
                 for (int destX = templateBounds.Left; destX < templateBounds.Right; destX++)
                 {
                     if (destX < 0 || destX >= background.Width)
+                        continue;
+
+                    if (IsExcludedByMask(exclusionMask, destX, destY, background.Width, background.Height))
                         continue;
 
                     int backgroundIndex = backgroundRow + destX;
@@ -533,6 +547,39 @@ namespace WindowsFormsApp1
                     BlendPixel(background.Pixels, backgroundIndex, sourcePixel);
                 }
             }
+        }
+
+        private static bool IsExcludedByMask(
+            ImagePixelData exclusionMask,
+            int x,
+            int y,
+            int targetWidth,
+            int targetHeight)
+        {
+            if (exclusionMask == null || targetWidth <= 0 || targetHeight <= 0)
+                return false;
+
+            int maskX = x;
+            int maskY = y;
+            if (exclusionMask.Width != targetWidth || exclusionMask.Height != targetHeight)
+            {
+                maskX = (int)((long)x * exclusionMask.Width / targetWidth);
+                maskY = (int)((long)y * exclusionMask.Height / targetHeight);
+            }
+
+            if (maskX < 0 || maskX >= exclusionMask.Width || maskY < 0 || maskY >= exclusionMask.Height)
+                return false;
+
+            int pixel = exclusionMask.Pixels[maskY * exclusionMask.Width + maskX];
+            byte alpha = (byte)((pixel >> 24) & 0xFF);
+            if (alpha == 0)
+                return false;
+
+            byte r = (byte)((pixel >> 16) & 0xFF);
+            byte g = (byte)((pixel >> 8) & 0xFF);
+            byte b = (byte)(pixel & 0xFF);
+            int brightness = (r + g + b) / 3;
+            return brightness < 128;
         }
 
         private static void DrawLayerPixels(ImagePixelData background, LayerPixelData layerData)

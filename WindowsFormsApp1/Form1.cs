@@ -507,6 +507,9 @@ namespace WindowsFormsApp1
                     ? TemplateCompositeMode.FullBleed
                     : TemplateCompositeMode.Standard;
                 string compositeModeName = cmbCompositeMode.SelectedItem?.ToString() ?? "套图标准模式";
+                string exclusionMaskPath = compositeMode == TemplateCompositeMode.FullBleed
+                    ? @"D:\matrials\3-save\mask.png"
+                    : null;
                 string ext = format.ToLower() == "jpeg" || format.ToLower() == "jpg" ? ".jpg" :
                              format.ToLower() == "png" ? ".png" :
                              format.ToLower() == "psd" ? ".psd" : ".tif";
@@ -534,7 +537,8 @@ namespace WindowsFormsApp1
                     chkVarnish.Checked ? "Varnish" : null,
                     0,
                     0,
-                    compositeMode);
+                    compositeMode,
+                    exclusionMaskPath);
 
                 lblStatus.Text = "正在生成预览...";
                 Application.DoEvents();
