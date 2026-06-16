@@ -1,11 +1,11 @@
-﻿using System;
+using BitMiracle.LibTiff.Classic;
+using ImageMagick;
+using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.IO;
 using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 using System.Windows.Forms;
 
 namespace WindowsFormsApp1
@@ -14,37 +14,46 @@ namespace WindowsFormsApp1
 
     public class RulerCanvas : Control
     {
+        private sealed class CanvasImageItem
+        {
+            public CanvasImageItem(Bitmap image, PointF worldLocation)
+            {
+                Image = image;
+                WorldLocation = worldLocation;
+            }
+
+            public Bitmap Image { get; }
+            public PointF WorldLocation { get; set; }
+            public bool IsSelected { get; set; }
+        }
+
         private const int RULER_SIZE = 28;
         private const float MIN_ZOOM = 0.1f;
         private const float MAX_ZOOM = 10f;
         private const float ZOOM_STEP = 0.02f;
-
         private const int SCROLLBAR_SIZE = 16;
-
-        // DPI 相关常量
         private const float DPI = 96f;
-        // 像素转毫米的转换系数 (1 inch = 25.4 mm)
         private const float MM_TO_PX = DPI / 25.4f;
 
-        private Bitmap _image = null;
-        private Point _imageLocation = Point.Empty;
-        private Point _imageOrigin = Point.Empty;
-        private float _zoom = 1f;
-        private Point _panStart = Point.Empty;
-        private Point _panOffset = Point.Empty;
-        private bool _isPanning = false;
-
+        private readonly List<CanvasImageItem> _images = new List<CanvasImageItem>();
         private readonly List<GuideLine> _guides = new List<GuideLine>();
-        private GuideLine _draggingGuide = null;
+
+        private CanvasImageItem _selectedImage;
+        private GuideLine _draggingGuide;
+        private Bitmap _checkerboard;
+        private readonly HScrollBar _hScroll;
+        private readonly VScrollBar _vScroll;
+        private static bool _magickInitialized;
+
+        private float _zoom = 1f;
+        private PointF _panOffset = PointF.Empty;
+        private Point _panStart = Point.Empty;
+        private PointF _dragImageStartWorld = PointF.Empty;
+        private bool _isPanning;
+        private bool _isDraggingImage;
         private bool _showRulers = true;
         private bool _showGuides = true;
-
         private Point _lastMousePos = Point.Empty;
-
-        private Bitmap _checkerboard = null;
-
-        private HScrollBar _hScroll;
-        private VScrollBar _vScroll;
         private BackgroundStyle _bgStyle = BackgroundStyle.White;
 
         public event Action<float> ZoomChanged;
@@ -61,13 +70,11 @@ namespace WindowsFormsApp1
             _guides.Add(new GuideLine { IsHorizontal = true, Position = 0.5f, Color = Color.FromArgb(100, 255, 0, 0) });
 
             _hScroll = new HScrollBar { TabStop = false };
-            _hScroll.Parent = null;
-            this.Controls.Add(_hScroll);
+            Controls.Add(_hScroll);
             _hScroll.ValueChanged += HScroll_ValueChanged;
 
             _vScroll = new VScrollBar { TabStop = false };
-            _vScroll.Parent = null;
-            this.Controls.Add(_vScroll);
+            Controls.Add(_vScroll);
             _vScroll.ValueChanged += VScroll_ValueChanged;
         }
 
@@ -79,83 +86,94 @@ namespace WindowsFormsApp1
 
         public BackgroundStyle GetBackgroundStyle() => _bgStyle;
 
-        private void HScroll_ValueChanged(object sender, EventArgs e)
+        public void LoadImage(Bitmap bitmap)
         {
-            if (_image == null) return;
-            _panOffset.X = -_hScroll.Value;
-            Invalidate();
+            ClearScene();
+            AddImage(bitmap);
         }
 
-        private void VScroll_ValueChanged(object sender, EventArgs e)
+        public void AddImage(Bitmap bitmap)
         {
-            if (_image == null) return;
-            _panOffset.Y = -_vScroll.Value;
-            Invalidate();
-        }
-
-        private void SyncScrollBarsFromOffset()
-        {
-            if (_hScroll.Visible)
+            if (bitmap == null)
             {
-                int targetX = Math.Max(_hScroll.Minimum, Math.Min(_hScroll.Maximum, -_panOffset.X));
-                if (_hScroll.Value != targetX)
-                {
-                    _hScroll.Value = targetX;
-                }
-            }
-            if (_vScroll.Visible)
-            {
-                int targetY = Math.Max(_vScroll.Minimum, Math.Min(_vScroll.Maximum, -_panOffset.Y));
-                if (_vScroll.Value != targetY)
-                {
-                    _vScroll.Value = targetY;
-                }
-            }
-        }
-
-        private void UpdateScrollBars()
-        {
-            if (_image == null)
-            {
-                _hScroll.Visible = false;
-                _vScroll.Visible = false;
                 return;
             }
 
-            int viewportW = GetViewportSize().Width;
-            int viewportH = GetViewportSize().Height;
-            int virtualW = (int)(_image.Width * _zoom);
-            int virtualH = (int)(_image.Height * _zoom);
+            PointF worldLocation = GetDefaultImageLocation(bitmap.Size);
+            CanvasImageItem item = new CanvasImageItem(bitmap, worldLocation);
+            _images.Add(item);
+            SelectImage(item, true);
 
-            bool needH = virtualW > viewportW;
-            bool needV = virtualH > viewportH;
-
-            _hScroll.Visible = needH;
-            _vScroll.Visible = needV;
-
-            if (needH)
+            if (_images.Count == 1)
             {
-                _hScroll.Location = new Point(RULER_SIZE, Height - SCROLLBAR_SIZE);
-                _hScroll.Width = needV ? viewportW - SCROLLBAR_SIZE : viewportW;
-                _hScroll.Minimum = 0;
-                _hScroll.Maximum = Math.Max(0, virtualW - viewportW);
-                _hScroll.LargeChange = Math.Max(1, viewportW);
-                _hScroll.SmallChange = Math.Max(1, viewportW / 10);
+                CenterScene();
+            }
+            else
+            {
+                ClampSelectedImageToViewport(item);
             }
 
-            if (needV)
+            UpdateScrollBars();
+            Invalidate();
+        }
+
+        public void ClearScene()
+        {
+            foreach (CanvasImageItem item in _images)
             {
-                _vScroll.Location = new Point(Width - SCROLLBAR_SIZE, RULER_SIZE);
-                _vScroll.Height = needH ? viewportH - SCROLLBAR_SIZE : viewportH;
-                _vScroll.Minimum = 0;
-                _vScroll.Maximum = Math.Max(0, virtualH - viewportH);
-                _vScroll.LargeChange = Math.Max(1, viewportH);
-                _vScroll.SmallChange = Math.Max(1, viewportH / 10);
+                item.Image.Dispose();
             }
+
+            _images.Clear();
+            _selectedImage = null;
+            _zoom = 1f;
+            _panOffset = PointF.Empty;
+            _hScroll.Visible = false;
+            _vScroll.Visible = false;
+            ZoomChanged?.Invoke(_zoom);
+            Invalidate();
+        }
+
+        public void ClearImage()
+        {
+            ClearScene();
+        }
+
+        public void ResetView()
+        {
+            _zoom = 1f;
+            CenterScene();
+            UpdateScrollBars();
+            ZoomChanged?.Invoke(_zoom);
+            Invalidate();
+        }
+
+        public void SetZoom(float zoom)
+        {
+            if (_images.Count == 0)
+            {
+                _zoom = Math.Max(MIN_ZOOM, Math.Min(MAX_ZOOM, zoom));
+                ZoomChanged?.Invoke(_zoom);
+                Invalidate();
+                return;
+            }
+
+            Rectangle viewport = GetViewportBounds();
+            PointF centerScreen = new PointF(viewport.Left + viewport.Width / 2f, viewport.Top + viewport.Height / 2f);
+            PointF centerWorld = ScreenToWorld(centerScreen);
+
+            _zoom = Math.Max(MIN_ZOOM, Math.Min(MAX_ZOOM, zoom));
+            _panOffset = new PointF(
+                centerScreen.X - centerWorld.X * _zoom,
+                centerScreen.Y - centerWorld.Y * _zoom);
 
             ClampPanOffset();
-            SyncScrollFromOffset();
+            UpdateScrollBars();
+            ZoomChanged?.Invoke(_zoom);
+            Invalidate();
         }
+
+        public float Zoom => _zoom;
 
         protected override void OnDragEnter(DragEventArgs drgevent)
         {
@@ -163,7 +181,7 @@ namespace WindowsFormsApp1
             if (drgevent.Data.GetDataPresent(DataFormats.FileDrop))
             {
                 string[] files = (string[])drgevent.Data.GetData(DataFormats.FileDrop);
-                if (files.Length > 0 && IsImageFile(files[0]))
+                if (files.Any(IsImageFile))
                 {
                     drgevent.Effect = DragDropEffects.Copy;
                     return;
@@ -175,161 +193,54 @@ namespace WindowsFormsApp1
         protected override void OnDragDrop(DragEventArgs drgevent)
         {
             base.OnDragDrop(drgevent);
-            if (drgevent.Data.GetDataPresent(DataFormats.FileDrop))
+            if (!drgevent.Data.GetDataPresent(DataFormats.FileDrop))
             {
-                string[] files = (string[])drgevent.Data.GetData(DataFormats.FileDrop);
-                if (files.Length > 0 && IsImageFile(files[0]))
-                {
-                    try
-                    {
-                        var bmp = new Bitmap(files[0]);
-                        LoadImage(bmp);
-                    }
-                    catch (Exception ex)
-                    {
-                        MessageBox.Show($"无法加载图片: {ex.Message}", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                    }
-                }
+                return;
             }
-        }
 
-        private bool IsImageFile(string path)
-        {
-            string ext = Path.GetExtension(path).ToLower();
-            return ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".bmp" || ext == ".gif" || ext == ".tif" || ext == ".tiff";
+            string[] files = (string[])drgevent.Data.GetData(DataFormats.FileDrop);
+            string[] imageFiles = files.Where(IsImageFile).ToArray();
+            if (imageFiles.Length == 0)
+            {
+                return;
+            }
+
+            List<Bitmap> loadedBitmaps = new List<Bitmap>();
+            try
+            {
+                foreach (string file in imageFiles)
+                {
+                    loadedBitmaps.Add(LoadBitmapFromFile(file));
+                }
+
+                foreach (Bitmap bmp in loadedBitmaps)
+                {
+                    AddImage(bmp);
+                }
+
+                loadedBitmaps.Clear();
+            }
+            catch (Exception ex)
+            {
+                foreach (Bitmap bmp in loadedBitmaps)
+                {
+                    bmp.Dispose();
+                }
+
+                MessageBox.Show($"无法加载图片: {ex.Message}", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
         }
 
         public void LoadImageFromFile(string filePath)
         {
             try
             {
-                var bmp = new Bitmap(filePath);
-                LoadImage(bmp);
+                AddImage(LoadBitmapFromFile(filePath));
             }
             catch (Exception ex)
             {
                 MessageBox.Show($"无法加载图片: {ex.Message}", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
-        }
-
-        private void CreateCheckerboard()
-        {
-            _checkerboard = new Bitmap(16, 16);
-            using (Graphics g = Graphics.FromImage(_checkerboard))
-            {
-                using (SolidBrush brush1 = new SolidBrush(Color.FromArgb(60, 60, 70)))
-                using (SolidBrush brush2 = new SolidBrush(Color.FromArgb(80, 80, 90)))
-                {
-                    g.FillRectangle(brush1, 0, 0, 8, 8);
-                    g.FillRectangle(brush2, 8, 0, 8, 8);
-                    g.FillRectangle(brush2, 0, 8, 8, 8);
-                    g.FillRectangle(brush1, 8, 8, 8, 8);
-                }
-            }
-        }
-
-        public void LoadImage(Bitmap bitmap)
-        {
-            _image?.Dispose();
-            _image = bitmap;
-            _panOffset = Point.Empty;
-            CenterImage();
-            _imageOrigin = _imageLocation;
-            UpdateScrollBars();
-            Invalidate();
-        }
-
-        public void ClearImage()
-        {
-            _image?.Dispose();
-            _image = null;
-            Invalidate();
-        }
-
-        private void CenterImage()
-        {
-            if (_image == null) return;
-
-            int canvasWidth = Width - RULER_SIZE;
-            int canvasHeight = Height - RULER_SIZE;
-
-            int imgW = (int)(_image.Width * _zoom);
-            int imgH = (int)(_image.Height * _zoom);
-
-            _imageLocation = new Point(
-                RULER_SIZE + (canvasWidth - imgW) / 2,
-                RULER_SIZE + (canvasHeight - imgH) / 2);
-        }
-
-        private Size GetViewportSize()
-        {
-            return new Size(
-                Math.Max(0, Width - RULER_SIZE - SCROLLBAR_SIZE),
-                Math.Max(0, Height - RULER_SIZE - SCROLLBAR_SIZE));
-        }
-
-        private void ClampPanOffset()
-        {
-            if (_image == null) return;
-
-            Rectangle viewportBounds = GetViewportBounds();
-            int scaledW = (int)(_image.Width * _zoom);
-            int scaledH = (int)(_image.Height * _zoom);
-
-            int minPanX = Math.Min(viewportBounds.Left - _imageLocation.X, viewportBounds.Right - _imageLocation.X - scaledW);
-            int maxPanX = Math.Max(viewportBounds.Left - _imageLocation.X, viewportBounds.Right - _imageLocation.X - scaledW);
-            int minPanY = Math.Min(viewportBounds.Top - _imageLocation.Y, viewportBounds.Bottom - _imageLocation.Y - scaledH);
-            int maxPanY = Math.Max(viewportBounds.Top - _imageLocation.Y, viewportBounds.Bottom - _imageLocation.Y - scaledH);
-
-            _panOffset.X = Math.Max(minPanX, Math.Min(maxPanX, _panOffset.X));
-            _panOffset.Y = Math.Max(minPanY, Math.Min(maxPanY, _panOffset.Y));
-        }
-
-        private void SyncScrollFromOffset()
-        {
-            if (_image == null) return;
-
-            int virtualW = (int)(_image.Width * _zoom);
-            int virtualH = (int)(_image.Height * _zoom);
-            int vpW = GetViewportSize().Width;
-            int vpH = GetViewportSize().Height;
-            int maxPanX = Math.Max(0, virtualW - vpW);
-            int maxPanY = Math.Max(0, virtualH - vpH);
-
-            // scrollbar 值 = panOffset + imageLocation (视口在虚拟画布中的位置)
-            if (_hScroll.Visible)
-            {
-                _hScroll.Minimum = 0;
-                _hScroll.Maximum = maxPanX;
-                _hScroll.Value = Math.Max(0, Math.Min(maxPanX, _panOffset.X + _imageLocation.X));
-            }
-            if (_vScroll.Visible)
-            {
-                _vScroll.Minimum = 0;
-                _vScroll.Maximum = maxPanY;
-                _vScroll.Value = Math.Max(0, Math.Min(maxPanY, _panOffset.Y + _imageLocation.Y));
-            }
-        }
-
-        private Rectangle GetViewportBounds()
-        {
-            return new Rectangle(
-                RULER_SIZE,
-                RULER_SIZE,
-                Math.Max(0, Width - RULER_SIZE),
-                Math.Max(0, Height - RULER_SIZE));
-        }
-
-        private Rectangle GetImageBounds()
-        {
-            if (_image == null)
-            {
-                return Rectangle.Empty;
-            }
-
-            int imgW = (int)(_image.Width * _zoom);
-            int imgH = (int)(_image.Height * _zoom);
-            return new Rectangle(_imageLocation.X + _panOffset.X, _imageLocation.Y + _panOffset.Y, imgW, imgH);
         }
 
         protected override void OnPaint(PaintEventArgs e)
@@ -339,15 +250,261 @@ namespace WindowsFormsApp1
             g.SmoothingMode = SmoothingMode.HighQuality;
 
             DrawBackground(g);
-            DrawImage(g);
+            DrawImages(g);
 
             if (_showRulers)
+            {
                 DrawRulers(g);
+            }
 
             if (_showGuides)
+            {
                 DrawGuides(g);
+            }
 
             DrawCrosshair(g);
+        }
+
+        protected override void OnMouseWheel(MouseEventArgs e)
+        {
+            base.OnMouseWheel(e);
+
+            if (_images.Count == 0)
+            {
+                return;
+            }
+
+            if ((Control.ModifierKeys & Keys.Alt) != 0)
+            {
+                PointF beforeZoomWorld = ScreenToWorld(e.Location);
+                float newZoom = Math.Max(MIN_ZOOM, Math.Min(MAX_ZOOM, _zoom + (e.Delta > 0 ? ZOOM_STEP : -ZOOM_STEP)));
+                if (Math.Abs(newZoom - _zoom) < 0.001f)
+                {
+                    return;
+                }
+
+                _zoom = newZoom;
+                _panOffset = new PointF(
+                    e.Location.X - beforeZoomWorld.X * _zoom,
+                    e.Location.Y - beforeZoomWorld.Y * _zoom);
+
+                ClampPanOffset();
+                UpdateScrollBars();
+                ZoomChanged?.Invoke(_zoom);
+                Invalidate();
+                return;
+            }
+
+            int scrollDelta = e.Delta / 120;
+            if (_vScroll.Visible)
+            {
+                int newValue = Math.Max(_vScroll.Minimum, Math.Min(_vScroll.Maximum, _vScroll.Value - scrollDelta * _vScroll.SmallChange));
+                if (_vScroll.Value != newValue)
+                {
+                    _vScroll.Value = newValue;
+                }
+            }
+            else if (_hScroll.Visible)
+            {
+                int newValue = Math.Max(_hScroll.Minimum, Math.Min(_hScroll.Maximum, _hScroll.Value - scrollDelta * _hScroll.SmallChange));
+                if (_hScroll.Value != newValue)
+                {
+                    _hScroll.Value = newValue;
+                }
+            }
+
+            Invalidate();
+        }
+
+        protected override void OnMouseDown(MouseEventArgs e)
+        {
+            base.OnMouseDown(e);
+
+            if (e.Button != MouseButtons.Left)
+            {
+                if (e.Button == MouseButtons.Right && e.Clicks == 2)
+                {
+                    ResetView();
+                }
+                return;
+            }
+
+            _draggingGuide = GetGuideAtPoint(e.Location);
+            if (_draggingGuide != null)
+            {
+                return;
+            }
+
+            CanvasImageItem hitImage = HitTestImage(e.Location);
+            if (hitImage != null)
+            {
+                SelectImage(hitImage, true);
+                _isDraggingImage = true;
+                _panStart = e.Location;
+                _dragImageStartWorld = hitImage.WorldLocation;
+                Cursor = Cursors.SizeAll;
+                return;
+            }
+
+            SelectImage(null, false);
+            _isPanning = true;
+            _panStart = e.Location;
+            Cursor = Cursors.SizeAll;
+        }
+
+        protected override void OnMouseMove(MouseEventArgs e)
+        {
+            base.OnMouseMove(e);
+            _lastMousePos = e.Location;
+
+            if (_draggingGuide != null)
+            {
+                UpdateGuidePosition(_draggingGuide, e.Location);
+                Invalidate();
+                return;
+            }
+
+            if (_isDraggingImage && _selectedImage != null)
+            {
+                float worldDx = (e.Location.X - _panStart.X) / _zoom;
+                float worldDy = (e.Location.Y - _panStart.Y) / _zoom;
+                _selectedImage.WorldLocation = new PointF(_dragImageStartWorld.X + worldDx, _dragImageStartWorld.Y + worldDy);
+                ClampSelectedImageToViewport(_selectedImage);
+                UpdateScrollBars();
+                Invalidate();
+                return;
+            }
+
+            if (_isPanning)
+            {
+                _panOffset = new PointF(_panOffset.X + e.Location.X - _panStart.X, _panOffset.Y + e.Location.Y - _panStart.Y);
+                _panStart = e.Location;
+                ClampPanOffset();
+                SyncScrollBarsFromOffset();
+                Invalidate();
+                return;
+            }
+
+            Invalidate();
+        }
+
+        protected override void OnMouseUp(MouseEventArgs e)
+        {
+            base.OnMouseUp(e);
+            _isPanning = false;
+            _isDraggingImage = false;
+            _draggingGuide = null;
+            Cursor = Cursors.Cross;
+        }
+
+        protected override void OnResize(EventArgs e)
+        {
+            base.OnResize(e);
+            ClampPanOffset();
+            UpdateScrollBars();
+            Invalidate();
+        }
+
+        private void HScroll_ValueChanged(object sender, EventArgs e)
+        {
+            if (_images.Count == 0)
+            {
+                return;
+            }
+
+            RectangleF sceneBounds = GetSceneBounds();
+            float maxPanX = GetHorizontalPanForScrollValue(0, sceneBounds);
+            _panOffset = new PointF(maxPanX - _hScroll.Value, _panOffset.Y);
+            Invalidate();
+        }
+
+        private void VScroll_ValueChanged(object sender, EventArgs e)
+        {
+            if (_images.Count == 0)
+            {
+                return;
+            }
+
+            RectangleF sceneBounds = GetSceneBounds();
+            float maxPanY = GetVerticalPanForScrollValue(0, sceneBounds);
+            _panOffset = new PointF(_panOffset.X, maxPanY - _vScroll.Value);
+            Invalidate();
+        }
+
+        private void SyncScrollBarsFromOffset()
+        {
+            if (_images.Count == 0)
+            {
+                return;
+            }
+
+            RectangleF sceneBounds = GetSceneBounds();
+
+            if (_hScroll.Visible)
+            {
+                int target = (int)Math.Round(GetHorizontalPanForScrollValue(0, sceneBounds) - _panOffset.X);
+                target = Math.Max(_hScroll.Minimum, Math.Min(_hScroll.Maximum, target));
+                if (_hScroll.Value != target)
+                {
+                    _hScroll.Value = target;
+                }
+            }
+
+            if (_vScroll.Visible)
+            {
+                int target = (int)Math.Round(GetVerticalPanForScrollValue(0, sceneBounds) - _panOffset.Y);
+                target = Math.Max(_vScroll.Minimum, Math.Min(_vScroll.Maximum, target));
+                if (_vScroll.Value != target)
+                {
+                    _vScroll.Value = target;
+                }
+            }
+        }
+
+        private void UpdateScrollBars()
+        {
+            if (_images.Count == 0)
+            {
+                _hScroll.Visible = false;
+                _vScroll.Visible = false;
+                return;
+            }
+
+            RectangleF sceneBounds = GetSceneBounds();
+            Size viewportSize = CalculateViewportSize(false, false);
+            bool needH = sceneBounds.Width * _zoom > viewportSize.Width;
+            bool needV = sceneBounds.Height * _zoom > viewportSize.Height;
+
+            viewportSize = CalculateViewportSize(needH, needV);
+            needH = sceneBounds.Width * _zoom > viewportSize.Width;
+            needV = sceneBounds.Height * _zoom > viewportSize.Height;
+            viewportSize = CalculateViewportSize(needH, needV);
+
+            _hScroll.Visible = needH;
+            _vScroll.Visible = needV;
+
+            if (_hScroll.Visible)
+            {
+                _hScroll.Location = new Point(RULER_SIZE, Height - SCROLLBAR_SIZE);
+                _hScroll.Width = viewportSize.Width;
+                _hScroll.Minimum = 0;
+                _hScroll.LargeChange = Math.Max(1, viewportSize.Width);
+                _hScroll.SmallChange = Math.Max(1, viewportSize.Width / 10);
+                _hScroll.Maximum = Math.Max(0, (int)Math.Ceiling(sceneBounds.Width * _zoom) - viewportSize.Width);
+            }
+
+            if (_vScroll.Visible)
+            {
+                _vScroll.Location = new Point(Width - SCROLLBAR_SIZE, RULER_SIZE);
+                _vScroll.Height = viewportSize.Height;
+                _vScroll.Minimum = 0;
+                _vScroll.LargeChange = Math.Max(1, viewportSize.Height);
+                _vScroll.SmallChange = Math.Max(1, viewportSize.Height / 10);
+                _vScroll.Maximum = Math.Max(0, (int)Math.Ceiling(sceneBounds.Height * _zoom) - viewportSize.Height);
+            }
+
+            ClampPanOffset();
+            SyncScrollBarsFromOffset();
         }
 
         private void DrawBackground(Graphics g)
@@ -360,80 +517,69 @@ namespace WindowsFormsApp1
                 return;
             }
 
-            using (SolidBrush workspaceBrush = new SolidBrush(
-                _bgStyle == BackgroundStyle.White
-                    ? Color.FromArgb(30, 30, 35)
-                    : Color.FromArgb(30, 30, 35)))
+            using (SolidBrush workspaceBrush = new SolidBrush(Color.FromArgb(30, 30, 35)))
             using (Pen viewportBorderPen = new Pen(Color.FromArgb(45, 45, 50), 1))
             {
                 g.FillRectangle(workspaceBrush, viewportBounds);
                 g.DrawRectangle(viewportBorderPen, viewportBounds.X, viewportBounds.Y, viewportBounds.Width - 1, viewportBounds.Height - 1);
             }
-
-            if (_image == null)
-            {
-                return;
-            }
-
-            Rectangle imageBounds = Rectangle.Intersect(GetImageBounds(), viewportBounds);
-            if (imageBounds.Width <= 0 || imageBounds.Height <= 0)
-            {
-                return;
-            }
-
-            GraphicsState state = g.Save();
-            g.SetClip(viewportBounds);
-
-            if (_bgStyle == BackgroundStyle.Checkerboard)
-            {
-                using (TextureBrush brush = new TextureBrush(_checkerboard, WrapMode.Tile))
-                {
-                    brush.TranslateTransform(imageBounds.X, imageBounds.Y);
-                    g.FillRectangle(brush, imageBounds);
-                }
-            }
-            else
-            {
-                using (SolidBrush whiteBg = new SolidBrush(Color.White))
-                {
-                    g.FillRectangle(whiteBg, imageBounds);
-                    
-                }
-            }
-
-            g.Restore(state);
         }
 
-        private void DrawImage(Graphics g)
+        private void DrawImages(Graphics g)
         {
-            if (_image == null)
+            if (_images.Count == 0)
             {
                 return;
             }
 
             Rectangle viewportBounds = GetViewportBounds();
-            Rectangle imageBounds = GetImageBounds();
-            if (viewportBounds.Width <= 0 || viewportBounds.Height <= 0 || imageBounds.Width <= 0 || imageBounds.Height <= 0)
-            {
-                return;
-            }
-
             GraphicsState state = g.Save();
             g.SetClip(viewportBounds);
-
-            using (SolidBrush shadowBrush = new SolidBrush(Color.FromArgb(90, 0, 0, 0)))
-            {
-                Rectangle shadowBounds = new Rectangle(imageBounds.X + 6, imageBounds.Y + 6, imageBounds.Width, imageBounds.Height);
-                g.FillRectangle(shadowBrush, shadowBounds);
-            }
-
             g.InterpolationMode = InterpolationMode.HighQualityBicubic;
             g.PixelOffsetMode = PixelOffsetMode.HighQuality;
-            g.DrawImage(_image, imageBounds);
 
-            using (Pen imageBorderPen = new Pen(Color.FromArgb(210, 210, 215)))
+            foreach (CanvasImageItem item in _images)
             {
-                g.DrawRectangle(imageBorderPen, imageBounds.X, imageBounds.Y, imageBounds.Width - 1, imageBounds.Height - 1);
+                RectangleF screenBounds = GetImageScreenBounds(item);
+                if (screenBounds.Width <= 0 || screenBounds.Height <= 0)
+                {
+                    continue;
+                }
+
+                RectangleF visibleBounds = RectangleF.Intersect(screenBounds, viewportBounds);
+                if (visibleBounds.Width <= 0 || visibleBounds.Height <= 0)
+                {
+                    continue;
+                }
+
+                if (_bgStyle == BackgroundStyle.Checkerboard)
+                {
+                    using (TextureBrush brush = new TextureBrush(_checkerboard, WrapMode.Tile))
+                    {
+                        brush.TranslateTransform(screenBounds.X, screenBounds.Y);
+                        g.FillRectangle(brush, screenBounds);
+                    }
+                }
+                else
+                {
+                    using (SolidBrush whiteBrush = new SolidBrush(Color.White))
+                    {
+                        g.FillRectangle(whiteBrush, screenBounds);
+                    }
+                }
+
+                using (SolidBrush shadowBrush = new SolidBrush(Color.FromArgb(90, 0, 0, 0)))
+                {
+                    RectangleF shadowBounds = new RectangleF(screenBounds.X + 6, screenBounds.Y + 6, screenBounds.Width, screenBounds.Height);
+                    g.FillRectangle(shadowBrush, shadowBounds);
+                }
+
+                g.DrawImage(item.Image, screenBounds);
+
+                using (Pen borderPen = new Pen(item.IsSelected ? Color.FromArgb(90, 170, 255) : Color.FromArgb(210, 210, 215), item.IsSelected ? 2f : 1f))
+                {
+                    g.DrawRectangle(borderPen, screenBounds.X, screenBounds.Y, screenBounds.Width - 1, screenBounds.Height - 1);
+                }
             }
 
             g.Restore(state);
@@ -463,28 +609,29 @@ namespace WindowsFormsApp1
         private void DrawXAxis(Graphics g, SolidBrush textBrush, Pen linePen, Font tickFont)
         {
             float pixelPerMm = MM_TO_PX * _zoom;
-            int endMm = (int)Math.Ceiling((Width - RULER_SIZE) / pixelPerMm);
-
-            // 自适应刻度间隔：保证主要刻度之间至少占 30px
+            int endMm = pixelPerMm <= 0 ? 0 : (int)Math.Ceiling((Width - RULER_SIZE) / pixelPerMm);
             int interval = GetAdaptiveInterval(pixelPerMm);
-            int subInterval = interval / 5;
+            int subInterval = Math.Max(1, interval / 5);
 
             for (int mm = 0; mm <= endMm; mm++)
             {
                 float x = RULER_SIZE + mm * pixelPerMm;
-                if (x > Width) break;
+                if (x > Width)
+                {
+                    break;
+                }
 
                 if (mm % interval == 0)
                 {
-                    int tickH = interval >= 50 ? 8 : interval >= 10 ? 12 : 16;
-                    g.DrawLine(linePen, x, RULER_SIZE - tickH, x, RULER_SIZE - 1);
+                    int tickHeight = interval >= 50 ? 8 : interval >= 10 ? 12 : 16;
+                    g.DrawLine(linePen, x, RULER_SIZE - tickHeight, x, RULER_SIZE - 1);
                     if (pixelPerMm * interval >= 40)
                     {
                         string label = interval >= 100 ? (mm / 100).ToString() : (mm / 10).ToString();
                         g.DrawString(label, tickFont, textBrush, new RectangleF(x + 2, 2, 32, 12));
                     }
                 }
-                else if (subInterval > 0 && mm % subInterval == 0)
+                else if (mm % subInterval == 0)
                 {
                     g.DrawLine(linePen, x, RULER_SIZE - 8, x, RULER_SIZE - 1);
                 }
@@ -494,74 +641,63 @@ namespace WindowsFormsApp1
         private void DrawYAxis(Graphics g, SolidBrush textBrush, Pen linePen, Font tickFont)
         {
             float pixelPerMm = MM_TO_PX * _zoom;
-            int endMm = (int)Math.Ceiling((Height - RULER_SIZE) / pixelPerMm);
-
+            int endMm = pixelPerMm <= 0 ? 0 : (int)Math.Ceiling((Height - RULER_SIZE) / pixelPerMm);
             int interval = GetAdaptiveInterval(pixelPerMm);
-            int subInterval = interval / 5;
+            int subInterval = Math.Max(1, interval / 5);
 
             for (int mm = 0; mm <= endMm; mm++)
             {
                 float y = RULER_SIZE + mm * pixelPerMm;
-                if (y > Height) break;
+                if (y > Height)
+                {
+                    break;
+                }
 
                 if (mm % interval == 0)
                 {
-                    int tickW = interval >= 50 ? 8 : interval >= 10 ? 12 : 16;
-                    g.DrawLine(linePen, RULER_SIZE - tickW, y, RULER_SIZE - 1, y);
+                    int tickWidth = interval >= 50 ? 8 : interval >= 10 ? 12 : 16;
+                    g.DrawLine(linePen, RULER_SIZE - tickWidth, y, RULER_SIZE - 1, y);
                     if (pixelPerMm * interval >= 40)
                     {
                         string label = interval >= 100 ? (mm / 100).ToString() : (mm / 10).ToString();
                         g.DrawString(label, tickFont, textBrush, new RectangleF(2, y - 7, RULER_SIZE - 4, 14));
                     }
                 }
-                else if (subInterval > 0 && mm % subInterval == 0)
+                else if (mm % subInterval == 0)
                 {
                     g.DrawLine(linePen, RULER_SIZE - 8, y, RULER_SIZE - 1, y);
                 }
             }
         }
 
-        private int GetAdaptiveInterval(float pixelPerMm)
-        {
-            // 动态选择刻度间隔，保证主要刻度间距 ≥ 30px
-            // interval 单位为 mm
-            if (pixelPerMm * 1 >= 30) return 1;
-            if (pixelPerMm * 5 >= 30) return 5;
-            if (pixelPerMm * 10 >= 30) return 10;
-            if (pixelPerMm * 50 >= 30) return 50;
-            return 100;
-        }
-
         private void DrawGuides(Graphics g)
         {
-            if (_image == null)
+            Rectangle viewportBounds = GetViewportBounds();
+            if (viewportBounds.Width <= 0 || viewportBounds.Height <= 0)
             {
                 return;
             }
-
-            int imgW = (int)(_image.Width * _zoom);
-            int imgH = (int)(_image.Height * _zoom);
 
             using (Pen guidePen = new Pen(Color.FromArgb(200, 255, 0, 0), 1f))
             {
                 guidePen.DashStyle = DashStyle.Dash;
 
-                foreach (var guide in _guides)
+                foreach (GuideLine guide in _guides)
                 {
                     if (guide.IsHorizontal)
                     {
-                        int y = _imageLocation.Y + _panOffset.Y + (int)(imgH * guide.Position);
-                        if (y >= RULER_SIZE && y <= Height)
+                        float y = viewportBounds.Top + viewportBounds.Height * guide.Position;
+                        if (y >= viewportBounds.Top && y <= viewportBounds.Bottom)
                         {
-                            g.DrawLine(guidePen, RULER_SIZE, y, Width, y);
+                            g.DrawLine(guidePen, viewportBounds.Left, y, viewportBounds.Right, y);
                         }
                     }
                     else
                     {
-                        int x = _imageLocation.X + _panOffset.X + (int)(imgW * guide.Position);
-                        if (x >= RULER_SIZE && x <= Width)
+                        float x = viewportBounds.Left + viewportBounds.Width * guide.Position;
+                        if (x >= viewportBounds.Left && x <= viewportBounds.Right)
                         {
-                            g.DrawLine(guidePen, x, RULER_SIZE, x, Height);
+                            g.DrawLine(guidePen, x, viewportBounds.Top, x, viewportBounds.Bottom);
                         }
                     }
                 }
@@ -570,193 +706,399 @@ namespace WindowsFormsApp1
 
         private void DrawCrosshair(Graphics g)
         {
-            if (_lastMousePos.X < RULER_SIZE || _lastMousePos.Y < RULER_SIZE) return;
-
-            using (Pen crossPen = new Pen(Color.FromArgb(100, 255, 255, 255), 1) { DashStyle = DashStyle.Dot })
+            Rectangle viewportBounds = GetViewportBounds();
+            if (!viewportBounds.Contains(_lastMousePos))
             {
-                g.DrawLine(crossPen, RULER_SIZE, _lastMousePos.Y, Width, _lastMousePos.Y);
-                g.DrawLine(crossPen, _lastMousePos.X, RULER_SIZE, _lastMousePos.X, Height);
-            }
-        }
-
-        protected override void OnMouseWheel(MouseEventArgs e)
-        {
-            base.OnMouseWheel(e);
-
-            if (_image == null) return;
-
-            // 按住 Alt 键时为放大缩小
-            if ((Control.ModifierKeys & Keys.Alt) != 0)
-            {
-                Point mousePos = e.Location;
-                Point beforeZoom = ScreenToImage(mousePos);
-
-                float newZoom = _zoom + (e.Delta > 0 ? ZOOM_STEP : -ZOOM_STEP);
-                newZoom = Math.Max(MIN_ZOOM, Math.Min(MAX_ZOOM, newZoom));
-
-                if (Math.Abs(newZoom - _zoom) < 0.001f) return;
-
-                _zoom = newZoom;
-
-                CenterImage();
-
-                Point afterZoom = ScreenToImage(mousePos);
-                _panOffset.Offset(afterZoom.X - beforeZoom.X, afterZoom.Y - beforeZoom.Y);
-
-                ClampPanOffset();
-                UpdateScrollBars();
-                ZoomChanged?.Invoke(_zoom);
-                Invalidate();
-            }
-            else
-            {
-                // 否则滚动滚动条（平移）
-                int scrollDelta = e.Delta / 120 * _vScroll.SmallChange;
-                if (_vScroll.Visible)
-                {
-                    int newVal = Math.Max(_vScroll.Minimum, Math.Min(_vScroll.Maximum, _vScroll.Value - scrollDelta));
-                    if (_vScroll.Value != newVal)
-                    {
-                        _vScroll.Value = newVal;
-                    }
-                }
-                else if (_hScroll.Visible)
-                {
-                    int newVal = Math.Max(_hScroll.Minimum, Math.Min(_hScroll.Maximum, _hScroll.Value - scrollDelta));
-                    if (_hScroll.Value != newVal)
-                    {
-                        _hScroll.Value = newVal;
-                    }
-                }
-                Invalidate();
-            }
-        }
-
-        protected override void OnMouseDown(MouseEventArgs e)
-        {
-            base.OnMouseDown(e);
-
-            if (e.Button == MouseButtons.Left)
-            {
-                _draggingGuide = GetGuideAtPoint(e.Location);
-                if (_draggingGuide != null) return;
-
-                _isPanning = true;
-                _panStart = e.Location;
-                Cursor = Cursors.SizeAll;
-            }
-            else if (e.Button == MouseButtons.Right && e.Clicks == 2)
-            {
-                ResetView();
-            }
-        }
-
-        protected override void OnMouseMove(MouseEventArgs e)
-        {
-            base.OnMouseMove(e);
-            _lastMousePos = e.Location;
-
-            if (_draggingGuide != null && _image != null)
-            {
-                int imgW = (int)(_image.Width * _zoom);
-                int imgH = (int)(_image.Height * _zoom);
-                int imgY = _imageLocation.Y + _panOffset.Y;
-                int imgX = _imageLocation.X + _panOffset.X;
-
-                if (_draggingGuide.IsHorizontal)
-                {
-                    int localY = e.Location.Y - imgY;
-                    if (localY >= 0 && localY <= imgH)
-                        _draggingGuide.Position = (float)localY / imgH;
-                }
-                else
-                {
-                    int localX = e.Location.X - imgX;
-                    if (localX >= 0 && localX <= imgW)
-                        _draggingGuide.Position = (float)localX / imgW;
-                }
-                Invalidate();
                 return;
             }
 
-            if (_isPanning)
+            using (Pen crossPen = new Pen(Color.FromArgb(100, 255, 255, 255), 1f))
             {
-                _panOffset.Offset(e.Location.X - _panStart.X, e.Location.Y - _panStart.Y);
-                _panStart = e.Location;
-                ClampPanOffset();
-                SyncScrollBarsFromOffset();
-                Invalidate();
-            }
-            else
-            {
-                Invalidate();
+                crossPen.DashStyle = DashStyle.Dot;
+                g.DrawLine(crossPen, viewportBounds.Left, _lastMousePos.Y, viewportBounds.Right, _lastMousePos.Y);
+                g.DrawLine(crossPen, _lastMousePos.X, viewportBounds.Top, _lastMousePos.X, viewportBounds.Bottom);
             }
         }
 
-        protected override void OnMouseUp(MouseEventArgs e)
+        private int GetAdaptiveInterval(float pixelPerMm)
         {
-            base.OnMouseUp(e);
-            _isPanning = false;
-            _draggingGuide = null;
-            Cursor = Cursors.Cross;
+            if (pixelPerMm * 1 >= 30) return 1;
+            if (pixelPerMm * 5 >= 30) return 5;
+            if (pixelPerMm * 10 >= 30) return 10;
+            if (pixelPerMm * 50 >= 30) return 50;
+            return 100;
         }
 
-        protected override void OnResize(EventArgs e)
+        private void CreateCheckerboard()
         {
-            base.OnResize(e);
-            CenterImage();
-            UpdateScrollBars();
-            Invalidate();
-        }
-
-        private Point ScreenToImage(Point screen)
-        {
-            return new Point(
-                (int)((screen.X - _imageLocation.X - _panOffset.X) / _zoom),
-                (int)((screen.Y - _imageLocation.Y - _panOffset.Y) / _zoom));
-        }
-
-        private GuideLine GetGuideAtPoint(Point screen)
-        {
-            if (_image == null) return null;
-
-            int imgW = (int)(_image.Width * _zoom);
-            int imgH = (int)(_image.Height * _zoom);
-            int hitRadius = 5;
-
-            foreach (var guide in _guides)
+            _checkerboard = new Bitmap(16, 16);
+            using (Graphics g = Graphics.FromImage(_checkerboard))
+            using (SolidBrush brush1 = new SolidBrush(Color.FromArgb(60, 60, 70)))
+            using (SolidBrush brush2 = new SolidBrush(Color.FromArgb(80, 80, 90)))
             {
-                if (guide.IsHorizontal)
+                g.FillRectangle(brush1, 0, 0, 8, 8);
+                g.FillRectangle(brush2, 8, 0, 8, 8);
+                g.FillRectangle(brush2, 0, 8, 8, 8);
+                g.FillRectangle(brush1, 8, 8, 8, 8);
+            }
+        }
+
+        private bool IsImageFile(string path)
+        {
+            string ext = Path.GetExtension(path).ToLowerInvariant();
+            return ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".bmp" || ext == ".gif" || ext == ".tif" || ext == ".tiff";
+        }
+
+        private Bitmap LoadBitmapFromFile(string filePath)
+        {
+            try
+            {
+                return new Bitmap(filePath);
+            }
+            catch (Exception gdiEx) when (IsTiffFile(filePath))
+            {
+                Exception magickEx = null;
+                try
                 {
-                    int y = _imageLocation.Y + _panOffset.Y + (int)(imgH * guide.Position);
-                    if (Math.Abs(screen.Y - y) <= hitRadius) return guide;
+                    return LoadBitmapWithMagick(filePath);
                 }
-                else
+                catch (Exception ex)
                 {
-                    int x = _imageLocation.X + _panOffset.X + (int)(imgW * guide.Position);
-                    if (Math.Abs(screen.X - x) <= hitRadius) return guide;
+                    magickEx = ex;
+                }
+
+                try
+                {
+                    return LoadBitmapWithLibTiff(filePath);
+                }
+                catch (Exception libTiffEx)
+                {
+                    throw new InvalidOperationException(
+                        $"TIFF 文件加载失败。GDI+：{gdiEx.Message}；Magick：{magickEx?.Message ?? "未执行"}；LibTiff：{libTiffEx.Message}",
+                        libTiffEx);
                 }
             }
+        }
+
+        private bool IsTiffFile(string path)
+        {
+            string ext = Path.GetExtension(path).ToLowerInvariant();
+            return ext == ".tif" || ext == ".tiff";
+        }
+
+        private Bitmap LoadBitmapWithMagick(string filePath)
+        {
+            EnsureMagickNetInitialized();
+
+            using (MagickImageCollection collection = new MagickImageCollection(filePath))
+            {
+                if (collection.Count == 0)
+                {
+                    throw new InvalidOperationException("TIFF 中没有可显示的图像帧");
+                }
+
+                for (int i = 0; i < collection.Count; i++)
+                {
+                    collection[i].Compose = CompositeOperator.Over;
+                    collection[i].Page = new MagickGeometry(0, 0, collection[i].Width, collection[i].Height);
+                    collection[i].Alpha(AlphaOption.On);
+                }
+
+                using (MagickImage flattened = collection.Count == 1 ? (MagickImage)collection[0] : (MagickImage)collection.Flatten())
+                {
+                    flattened.Format = MagickFormat.Png;
+                    byte[] bytes = flattened.ToByteArray();
+                    using (MemoryStream ms = new MemoryStream(bytes))
+                    using (Bitmap decoded = new Bitmap(ms))
+                    {
+                        return new Bitmap(decoded);
+                    }
+                }
+            }
+        }
+
+        private Bitmap LoadBitmapWithLibTiff(string filePath)
+        {
+            using (Tiff tif = Tiff.Open(filePath, "r"))
+            {
+                if (tif == null)
+                {
+                    throw new InvalidOperationException("LibTiff 无法打开该 TIFF 文件");
+                }
+
+                FieldValue[] widthField = tif.GetField(TiffTag.IMAGEWIDTH);
+                FieldValue[] heightField = tif.GetField(TiffTag.IMAGELENGTH);
+                if (widthField == null || heightField == null)
+                {
+                    throw new InvalidOperationException("TIFF 缺少宽高信息");
+                }
+
+                int width = widthField[0].ToInt();
+                int height = heightField[0].ToInt();
+                if (width <= 0 || height <= 0)
+                {
+                    throw new InvalidOperationException($"TIFF 尺寸无效: {width}x{height}");
+                }
+
+                int[] raster = new int[width * height];
+                bool ok = tif.ReadRGBAImageOriented(width, height, raster, BitMiracle.LibTiff.Classic.Orientation.TOPLEFT);
+                if (!ok)
+                {
+                    throw new InvalidOperationException("LibTiff RGBA 解码失败");
+                }
+
+                Bitmap bitmap = new Bitmap(width, height, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+                for (int y = 0; y < height; y++)
+                {
+                    int row = y * width;
+                    for (int x = 0; x < width; x++)
+                    {
+                        int rgba = raster[row + x];
+                        byte r = (byte)Tiff.GetR(rgba);
+                        byte g = (byte)Tiff.GetG(rgba);
+                        byte b = (byte)Tiff.GetB(rgba);
+                        byte a = (byte)Tiff.GetA(rgba);
+                        bitmap.SetPixel(x, y, Color.FromArgb(a, r, g, b));
+                    }
+                }
+
+                return bitmap;
+            }
+        }
+
+        private void EnsureMagickNetInitialized()
+        {
+            if (_magickInitialized)
+            {
+                return;
+            }
+
+            string baseDirectory = AppDomain.CurrentDomain.BaseDirectory;
+            if (!string.IsNullOrWhiteSpace(baseDirectory) && Directory.Exists(baseDirectory))
+            {
+                MagickNET.Initialize(baseDirectory);
+            }
+
+            _magickInitialized = true;
+        }
+
+        private Size CalculateViewportSize(bool includeHorizontalScroll, bool includeVerticalScroll)
+        {
+            return new Size(
+                Math.Max(0, Width - RULER_SIZE - (includeVerticalScroll ? SCROLLBAR_SIZE : 0)),
+                Math.Max(0, Height - RULER_SIZE - (includeHorizontalScroll ? SCROLLBAR_SIZE : 0)));
+        }
+
+        private Rectangle GetViewportBounds()
+        {
+            return new Rectangle(
+                RULER_SIZE,
+                RULER_SIZE,
+                Math.Max(0, Width - RULER_SIZE - (_vScroll.Visible ? SCROLLBAR_SIZE : 0)),
+                Math.Max(0, Height - RULER_SIZE - (_hScroll.Visible ? SCROLLBAR_SIZE : 0)));
+        }
+
+        private RectangleF GetSceneBounds()
+        {
+            if (_images.Count == 0)
+            {
+                return RectangleF.Empty;
+            }
+
+            RectangleF bounds = new RectangleF(_images[0].WorldLocation, _images[0].Image.Size);
+            for (int i = 1; i < _images.Count; i++)
+            {
+                bounds = RectangleF.Union(bounds, new RectangleF(_images[i].WorldLocation, _images[i].Image.Size));
+            }
+
+            return bounds;
+        }
+
+        private PointF GetDefaultImageLocation(Size imageSize)
+        {
+            Rectangle viewportBounds = GetViewportBounds();
+            PointF screenCenter = new PointF(viewportBounds.Left + viewportBounds.Width / 2f, viewportBounds.Top + viewportBounds.Height / 2f);
+            PointF worldCenter = ScreenToWorld(screenCenter);
+            float offset = (_images.Count * 24f) / Math.Max(_zoom, 0.001f);
+            return new PointF(
+                worldCenter.X - imageSize.Width / 2f + offset,
+                worldCenter.Y - imageSize.Height / 2f + offset);
+        }
+
+        private RectangleF GetImageScreenBounds(CanvasImageItem item)
+        {
+            return new RectangleF(
+                _panOffset.X + item.WorldLocation.X * _zoom,
+                _panOffset.Y + item.WorldLocation.Y * _zoom,
+                item.Image.Width * _zoom,
+                item.Image.Height * _zoom);
+        }
+
+        private PointF ScreenToWorld(PointF screenPoint)
+        {
+            return new PointF(
+                (screenPoint.X - _panOffset.X) / _zoom,
+                (screenPoint.Y - _panOffset.Y) / _zoom);
+        }
+
+        private CanvasImageItem HitTestImage(Point screenPoint)
+        {
+            PointF worldPoint = ScreenToWorld(screenPoint);
+            for (int i = _images.Count - 1; i >= 0; i--)
+            {
+                RectangleF worldBounds = new RectangleF(_images[i].WorldLocation, _images[i].Image.Size);
+                if (worldBounds.Contains(worldPoint))
+                {
+                    return _images[i];
+                }
+            }
+
             return null;
         }
 
-        public void ResetView()
+        private void SelectImage(CanvasImageItem item, bool bringToFront)
         {
-            _zoom = 1f;
-            _panOffset = Point.Empty;
-            CenterImage();
-            ZoomChanged?.Invoke(_zoom);
-            Invalidate();
+            foreach (CanvasImageItem image in _images)
+            {
+                image.IsSelected = false;
+            }
+
+            _selectedImage = item;
+            if (_selectedImage != null)
+            {
+                _selectedImage.IsSelected = true;
+                if (bringToFront)
+                {
+                    _images.Remove(_selectedImage);
+                    _images.Add(_selectedImage);
+                }
+            }
         }
 
-        public void SetZoom(float zoom)
+        private void CenterScene()
         {
-            _zoom = Math.Max(MIN_ZOOM, Math.Min(MAX_ZOOM, zoom));
-            CenterImage();
-            ZoomChanged?.Invoke(_zoom);
-            Invalidate();
+            if (_images.Count == 0)
+            {
+                _panOffset = PointF.Empty;
+                return;
+            }
+
+            Rectangle viewportBounds = GetViewportBounds();
+            RectangleF sceneBounds = GetSceneBounds();
+            PointF viewportCenter = new PointF(viewportBounds.Left + viewportBounds.Width / 2f, viewportBounds.Top + viewportBounds.Height / 2f);
+            PointF sceneCenter = new PointF(sceneBounds.Left + sceneBounds.Width / 2f, sceneBounds.Top + sceneBounds.Height / 2f);
+            _panOffset = new PointF(
+                viewportCenter.X - sceneCenter.X * _zoom,
+                viewportCenter.Y - sceneCenter.Y * _zoom);
         }
 
-        public float Zoom => _zoom;
+        private float GetHorizontalPanForScrollValue(int scrollValue, RectangleF sceneBounds)
+        {
+            Rectangle viewportBounds = GetViewportBounds();
+            float leftAlignedPan = viewportBounds.Left - sceneBounds.Left * _zoom;
+            return leftAlignedPan - scrollValue;
+        }
+
+        private float GetVerticalPanForScrollValue(int scrollValue, RectangleF sceneBounds)
+        {
+            Rectangle viewportBounds = GetViewportBounds();
+            float topAlignedPan = viewportBounds.Top - sceneBounds.Top * _zoom;
+            return topAlignedPan - scrollValue;
+        }
+
+        private void ClampPanOffset()
+        {
+            if (_images.Count == 0)
+            {
+                return;
+            }
+
+            Rectangle viewportBounds = GetViewportBounds();
+            RectangleF sceneBounds = GetSceneBounds();
+
+            float leftAlignedPan = viewportBounds.Left - sceneBounds.Left * _zoom;
+            float rightAlignedPan = viewportBounds.Right - sceneBounds.Right * _zoom;
+            float topAlignedPan = viewportBounds.Top - sceneBounds.Top * _zoom;
+            float bottomAlignedPan = viewportBounds.Bottom - sceneBounds.Bottom * _zoom;
+
+            float minPanX = Math.Min(leftAlignedPan, rightAlignedPan);
+            float maxPanX = Math.Max(leftAlignedPan, rightAlignedPan);
+            float minPanY = Math.Min(topAlignedPan, bottomAlignedPan);
+            float maxPanY = Math.Max(topAlignedPan, bottomAlignedPan);
+
+            _panOffset = new PointF(
+                Math.Max(minPanX, Math.Min(maxPanX, _panOffset.X)),
+                Math.Max(minPanY, Math.Min(maxPanY, _panOffset.Y)));
+        }
+
+        private void ClampSelectedImageToViewport(CanvasImageItem item)
+        {
+            if (item == null)
+            {
+                return;
+            }
+
+            Rectangle viewportBounds = GetViewportBounds();
+            float scaledWidth = item.Image.Width * _zoom;
+            float scaledHeight = item.Image.Height * _zoom;
+
+            float screenX = _panOffset.X + item.WorldLocation.X * _zoom;
+            float screenY = _panOffset.Y + item.WorldLocation.Y * _zoom;
+
+            float minScreenX = Math.Min(viewportBounds.Left, viewportBounds.Right - scaledWidth);
+            float maxScreenX = Math.Max(viewportBounds.Left, viewportBounds.Right - scaledWidth);
+            float minScreenY = Math.Min(viewportBounds.Top, viewportBounds.Bottom - scaledHeight);
+            float maxScreenY = Math.Max(viewportBounds.Top, viewportBounds.Bottom - scaledHeight);
+
+            screenX = Math.Max(minScreenX, Math.Min(maxScreenX, screenX));
+            screenY = Math.Max(minScreenY, Math.Min(maxScreenY, screenY));
+
+            item.WorldLocation = new PointF(
+                (screenX - _panOffset.X) / _zoom,
+                (screenY - _panOffset.Y) / _zoom);
+        }
+
+        private GuideLine GetGuideAtPoint(Point screenPoint)
+        {
+            Rectangle viewportBounds = GetViewportBounds();
+            int hitRadius = 5;
+
+            foreach (GuideLine guide in _guides)
+            {
+                if (guide.IsHorizontal)
+                {
+                    int y = (int)Math.Round(viewportBounds.Top + viewportBounds.Height * guide.Position);
+                    if (Math.Abs(screenPoint.Y - y) <= hitRadius)
+                    {
+                        return guide;
+                    }
+                }
+                else
+                {
+                    int x = (int)Math.Round(viewportBounds.Left + viewportBounds.Width * guide.Position);
+                    if (Math.Abs(screenPoint.X - x) <= hitRadius)
+                    {
+                        return guide;
+                    }
+                }
+            }
+
+            return null;
+        }
+
+        private void UpdateGuidePosition(GuideLine guide, Point screenPoint)
+        {
+            Rectangle viewportBounds = GetViewportBounds();
+            if (guide.IsHorizontal)
+            {
+                float localY = screenPoint.Y - viewportBounds.Top;
+                guide.Position = Math.Max(0f, Math.Min(1f, viewportBounds.Height <= 0 ? 0f : localY / viewportBounds.Height));
+            }
+            else
+            {
+                float localX = screenPoint.X - viewportBounds.Left;
+                guide.Position = Math.Max(0f, Math.Min(1f, viewportBounds.Width <= 0 ? 0f : localX / viewportBounds.Width));
+            }
+        }
     }
 }
