@@ -1,107 +1,44 @@
+using RulerGridApp;
 using System;
 using System.Collections.Generic;
-using System.ComponentModel;
-using System.Configuration;
-using System.Data;
 using System.Drawing;
 using System.Drawing.Drawing2D;
-using System.Drawing.Imaging;
 using System.IO;
 using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 using System.Windows.Forms;
-using BitMiracle.LibTiff;
-using BitMiracle.LibTiff.Classic;
 
 namespace WindowsFormsApp1
 {
     public partial class Form1 : Form
     {
-        private TabControl tabControl;
-        private TabPage tabTemplateMerge;
-        private TabPage tabLayout;
-
-        private Label lblTemplateFolder;
-        private TextBox txtTemplateFolder;
-        private Button btnBrowseTemplateFolder;
-
-        private Label lblMaterialFolder;
-        private TextBox txtMaterialFolder;
-        private Button btnBrowseMaterialFolder;
-
-        private Label lblSavePath;
-        private TextBox txtSavePath;
-        private Button btnBrowseSavePath;
-
-        private Label lblSeparator;
-        private TextBox txtSeparator;
-        private ComboBox cmbFormat;
-        private ComboBox cmbCompositeMode;
-
-        private CheckBox chkWhiteInk;
-        private CheckBox chkVarnish;
-
-        // private TextBox txtWhiteInkName;
-        // private TextBox txtVarnishName;
-
-        private Button btnMerge;
-        private PictureBox picResultPreview;
+        private RulerCanvas canvas;
         private Label lblStatus;
+        private Label lblZoom;
+        private Button btnMergeTool;
 
-        private Label lblLayoutInfo;
+        private TrackBar zoomTrackBar;
+        private Label zoomLabel;
+        private Button resetZoomButton;
 
         public Form1()
         {
             SetupDarkTheme();
-            SetupTabControl();
-            SetupTemplateMergeTab();
-            SetupLayoutTab();
-            LoadSavedPaths();
-            //previewImage();
+            SetupCanvas();
+            SetupToolbar();
+            SetupStatusBar();
+            SetupDragDrop();
         }
 
-        private void LoadSavedPaths()
+        private void SetupDragDrop()
         {
-            try
-            {
-                var settings = Properties.Settings.Default;
-                if (!string.IsNullOrEmpty(settings.TemplateFolder) && Directory.Exists(settings.TemplateFolder))
-                    txtTemplateFolder.Text = settings.TemplateFolder;
-                if (!string.IsNullOrEmpty(settings.MaterialFolder) && Directory.Exists(settings.MaterialFolder))
-                    txtMaterialFolder.Text = settings.MaterialFolder;
-                if (!string.IsNullOrEmpty(settings.SavePath) && Directory.Exists(settings.SavePath))
-                    txtSavePath.Text = settings.SavePath;
-            }
-            catch { }
-        }
-
-        private void SavePath(TextBox textBox, string settingName)
-        {
-            try
-            {
-                var settings = Properties.Settings.Default;
-                switch (settingName)
-                {
-                    case "TemplateFolder":
-                        settings.TemplateFolder = textBox.Text;
-                        break;
-                    case "MaterialFolder":
-                        settings.MaterialFolder = textBox.Text;
-                        break;
-                    case "SavePath":
-                        settings.SavePath = textBox.Text;
-                        break;
-                }
-                settings.Save();
-            }
-            catch { }
+            // RulerCanvas 已经内置拖放支持，这里不需要额外处理
         }
 
         private void SetupDarkTheme()
         {
             this.Text = "图片处理工具";
-            this.Size = new Size(1000, 650);
+            this.Size = new Size(1280, 800);
+            this.MinimumSize = new Size(1024, 700);
             this.StartPosition = FormStartPosition.CenterScreen;
             this.BackColor = Color.FromArgb(25, 35, 55);
             this.ForeColor = Color.FromArgb(220, 225, 235);
@@ -111,169 +48,306 @@ namespace WindowsFormsApp1
                 null, this, new object[] { true });
         }
 
-        private void SetupTabControl()
+        private void SetupToolbar()
         {
-            tabControl = new TabControl
+            Panel toolbarPanel = new Panel
             {
-                Dock = DockStyle.Fill,
-                Location = new Point(0, 0),
-                Size = new Size(1100, 850),
-                BackColor = Color.FromArgb(30, 40, 60),
+                Dock = DockStyle.Top,
+                Height = 48,
+                BackColor = Color.FromArgb(30, 40, 60)
+            };
+            this.Controls.Add(toolbarPanel);
+
+            // 套图工具按钮
+            btnMergeTool = new Button
+            {
+                Text = "套图",
+                Location = new Point(10, 10),
+                Size = new Size(80, 28),
+                Font = new Font("微软雅黑", 10F),
+                BackColor = Color.FromArgb(45, 100, 160),
                 ForeColor = Color.FromArgb(220, 225, 235),
-                ItemSize = new Size(120, 40),
-                DrawMode = TabDrawMode.OwnerDrawFixed
+                FlatStyle = FlatStyle.Flat,
+                Cursor = Cursors.Hand,
+                Tag = "套图"
+            };
+            btnMergeTool.FlatAppearance.BorderColor = Color.FromArgb(70, 140, 200);
+            btnMergeTool.FlatAppearance.MouseOverBackColor = Color.FromArgb(55, 120, 180);
+            btnMergeTool.Click += BtnMergeTool_Click;
+
+            // 缩放标签
+            zoomLabel = new Label
+            {
+                Text = "缩放: 100%",
+                Location = new Point(110, 10),
+                Size = new Size(60, 28),
+                Font = new Font("微软雅黑", 9F),
+                ForeColor = Color.FromArgb(200, 205, 215),
+                BackColor = Color.Transparent,
+                TextAlign = ContentAlignment.MiddleLeft
             };
 
-            tabControl.DrawItem += TabControl_DrawItem;
+            // 缩放滑块 (10% - 300%)
+            zoomTrackBar = new TrackBar
+            {
+                Location = new Point(175, 10),
+                Minimum = 10,
+                Maximum = 300,
+                Value = 100,
+                TickFrequency = 25,
+                Width = 200,
+                Height = 30
+            };
+            zoomTrackBar.ValueChanged += ZoomTrackBar_ValueChanged;
 
-            tabTemplateMerge = new TabPage("套图");
-            tabTemplateMerge.BackColor = Color.FromArgb(25, 35, 55);
-            tabTemplateMerge.ForeColor = Color.FromArgb(220, 225, 235);
+            // 重置按钮
+            resetZoomButton = new Button
+            {
+                Text = "重置",
+                Location = new Point(385, 10),
+                Size = new Size(50, 28),
+                Font = new Font("微软雅黑", 9F),
+                BackColor = Color.FromArgb(40, 55, 80),
+                ForeColor = Color.FromArgb(220, 225, 235),
+                FlatStyle = FlatStyle.Flat,
+                Cursor = Cursors.Hand
+            };
+            resetZoomButton.Click += (s, e) => canvas?.ResetView();
 
-            tabLayout = new TabPage("排版");
-            tabLayout.BackColor = Color.FromArgb(25, 35, 55);
-            tabLayout.ForeColor = Color.FromArgb(220, 225, 235);
+            toolbarPanel.Controls.Add(btnMergeTool);
+            toolbarPanel.Controls.Add(zoomLabel);
+            toolbarPanel.Controls.Add(zoomTrackBar);
+            toolbarPanel.Controls.Add(resetZoomButton);
 
-            tabControl.TabPages.Add(tabTemplateMerge);
-            tabControl.TabPages.Add(tabLayout);
-
-            this.Controls.Add(tabControl);
+            // 同步 canvas 缩放事件到工具栏
+            if (canvas != null)
+            {
+                canvas.ZoomChanged += (zoom) =>
+                {
+                    zoomTrackBar.Value = (int)Math.Min(300, Math.Max(10, zoom * 100));
+                    zoomLabel.Text = $"缩放: {(int)(zoom * 100)}%";
+                };
+            }
         }
 
-        private void TabControl_DrawItem(object sender, DrawItemEventArgs e)
+        private void SetupCanvas()
         {
-            Graphics g = e.Graphics;
-            TabControl tc = (TabControl)sender;
-            TabPage tp = tc.TabPages[e.Index];
-            Rectangle bounds = tc.GetTabRect(e.Index);
+            canvas = new RulerCanvas
+            {
+                Dock = DockStyle.Fill,
+                BackColor = Color.FromArgb(35, 40, 50)
+            };
+            this.Controls.Add(canvas);
+        }
 
-            using (SolidBrush bgBrush = new SolidBrush(
-                tc.SelectedIndex == e.Index ? Color.FromArgb(45, 65, 95) : Color.FromArgb(30, 40, 60)))
+        private void SetupStatusBar()
+        {
+            Panel statusPanel = new Panel
             {
-                g.FillRectangle(bgBrush, bounds);
-            }
-            
-            using (SolidBrush textBrush = new SolidBrush(
-                tc.SelectedIndex == e.Index ? Color.FromArgb(100, 180, 255) : Color.FromArgb(180, 185, 195)))
+                Dock = DockStyle.Bottom,
+                Height = 28,
+                BackColor = Color.FromArgb(25, 35, 55)
+            };
+            this.Controls.Add(statusPanel);
+
+            lblStatus = new Label
             {
-                StringFormat sf = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center };
-                g.DrawString(tp.Text, new Font("微软雅黑", 12F), textBrush, bounds, sf);
+                Text = "就绪",
+                Location = new Point(10, 5),
+                Size = new Size(300, 18),
+                Font = new Font("微软雅黑", 9F),
+                ForeColor = Color.FromArgb(150, 155, 165),
+                BackColor = Color.Transparent
+            };
+
+            lblZoom = new Label
+            {
+                Text = "100%",
+                Anchor = AnchorStyles.Top | AnchorStyles.Right,
+                Location = new Point(statusPanel.Width - 80, 5),
+                Size = new Size(70, 18),
+                Font = new Font("微软雅黑", 9F),
+                ForeColor = Color.FromArgb(150, 155, 165),
+                BackColor = Color.Transparent,
+                TextAlign = ContentAlignment.MiddleRight
+            };
+
+            statusPanel.Controls.Add(lblStatus);
+            statusPanel.Controls.Add(lblZoom);
+            canvas.ZoomChanged += (zoom) => lblZoom.Text = $"{Math.Round(zoom * 100)}%";
+        }
+
+        private void BtnMergeTool_Click(object sender, EventArgs e)
+        {
+            using (var dialog = new MergeDialog())
+            {
+                dialog.Owner = this;
+                if (dialog.ShowDialog() == DialogResult.OK && !string.IsNullOrEmpty(dialog.ResultPath))
+                {
+                    LoadResultToCanvas(dialog.ResultPath);
+                }
             }
         }
 
-        private void SetupTemplateMergeTab()
+        private void LoadResultToCanvas(string path)
         {
-            int startX = 30;
-            int startY = 30;
-            int rowHeight = 45;
-            int labelWidth = 100;
-            int textBoxWidth = 500;
-            int btnWidth = 80;
+            try
+            {
+                lblStatus.Text = "加载图片...";
+                Application.DoEvents();
 
-            lblTemplateFolder = CreateLabel("模版文件夹:", startX, startY, labelWidth);
-            txtTemplateFolder = CreateTextBox(startX + labelWidth + 10, startY - 3, textBoxWidth);
-            btnBrowseTemplateFolder = CreateButton("浏览...", startX + labelWidth + textBoxWidth + 20, startY - 5, btnWidth);
-            btnBrowseTemplateFolder.Click += (s, e) => BrowseFolder(txtTemplateFolder);
+                using (var resultBitmap = new Bitmap(path))
+                {
+                    canvas.LoadImage(new Bitmap(resultBitmap));
+                }
 
-            startY += rowHeight + 10;
-            lblMaterialFolder = CreateLabel("素材文件夹:", startX, startY, labelWidth);
-            txtMaterialFolder = CreateTextBox(startX + labelWidth + 10, startY - 3, textBoxWidth);
-            btnBrowseMaterialFolder = CreateButton("浏览...", startX + labelWidth + textBoxWidth + 20, startY - 5, btnWidth);
-            btnBrowseMaterialFolder.Click += (s, e) => BrowseFolder(txtMaterialFolder);
+                lblStatus.Text = "完成！";
+            }
+            catch (Exception ex)
+            {
+                lblStatus.Text = "加载失败";
+                MessageBox.Show($"加载图片失败: {ex.Message}", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
 
-            startY += rowHeight + 10;
-            lblSavePath = CreateLabel("保存路径:", startX, startY, labelWidth);
-            txtSavePath = CreateTextBox(startX + labelWidth + 10, startY - 3, textBoxWidth);
-            btnBrowseSavePath = CreateButton("浏览...", startX + labelWidth + textBoxWidth + 20, startY - 5, btnWidth);
-            btnBrowseSavePath.Click += (s, e) => BrowseFolder(txtSavePath);
+        private void ZoomTrackBar_ValueChanged(object sender, EventArgs e)
+        {
+            if (canvas != null)
+            {
+                float newZoom = zoomTrackBar.Value / 100f;
+                canvas.SetZoom(newZoom);
+                zoomLabel.Text = $"缩放: {zoomTrackBar.Value}%";
+            }
+        }
+    }
 
-            startY += rowHeight + 10;
-            lblSeparator = CreateLabel("文件名分隔符:", startX, startY, labelWidth);
-            txtSeparator = CreateTextBox(startX + labelWidth + 10, startY - 3, 100);
+    // ========== 套图弹窗 ==========
+    public class MergeDialog : Form
+    {
+        private TextBox txtTemplateFolder;
+        private TextBox txtMaterialFolder;
+        private TextBox txtSavePath;
+        private TextBox txtSeparator;
+        private ComboBox cmbFormat;
+        private ComboBox cmbCompositeMode;
+        private CheckBox chkWhiteInk;
+        private CheckBox chkVarnish;
+        private Button btnMerge;
+        private Label lblStatus;
+        private Button btnClose;
+
+        public string ResultPath { get; private set; }
+
+        public MergeDialog()
+        {
+            SetupDarkTheme();
+            SetupControls();
+            LoadSavedPaths();
+        }
+
+        private void SetupDarkTheme()
+        {
+            this.Text = "套图";
+            this.Size = new Size(520, 380);
+            this.StartPosition = FormStartPosition.CenterParent;
+            this.FormBorderStyle = FormBorderStyle.FixedDialog;
+            this.MaximizeBox = false;
+            this.MinimizeBox = false;
+            this.BackColor = Color.FromArgb(25, 35, 55);
+            this.ForeColor = Color.FromArgb(220, 225, 235);
+
+            // 居中显示
+            this.StartPosition = FormStartPosition.CenterParent;
+        }
+
+        private void SetupControls()
+        {
+            int startX = 20;
+            int startY = 20;
+            int rowHeight = 40;
+            int labelWidth = 80;
+            int textBoxWidth = 320;
+            int btnWidth = 60;
+
+            // 模版文件夹
+            var lblTemplate = CreateLabel("模版:", startX, startY, labelWidth);
+            txtTemplateFolder = CreateTextBox(startX + labelWidth + 5, startY, textBoxWidth);
+            var btnBrowseTemplate = CreateButton("浏览", startX + labelWidth + textBoxWidth + 10, startY, btnWidth);
+            btnBrowseTemplate.Click += (s, e) => BrowseFolder(txtTemplateFolder);
+
+            // 素材文件夹
+            startY += rowHeight;
+            var lblMaterial = CreateLabel("素材:", startX, startY, labelWidth);
+            txtMaterialFolder = CreateTextBox(startX + labelWidth + 5, startY, textBoxWidth);
+            var btnBrowseMaterial = CreateButton("浏览", startX + labelWidth + textBoxWidth + 10, startY, btnWidth);
+            btnBrowseMaterial.Click += (s, e) => BrowseFolder(txtMaterialFolder);
+
+            // 保存路径
+            startY += rowHeight;
+            var lblSave = CreateLabel("保存:", startX, startY, labelWidth);
+            txtSavePath = CreateTextBox(startX + labelWidth + 5, startY, textBoxWidth);
+            var btnBrowseSave = CreateButton("浏览", startX + labelWidth + textBoxWidth + 10, startY, btnWidth);
+            btnBrowseSave.Click += (s, e) => BrowseFolder(txtSavePath);
+
+            // 分隔符 + 格式 + 模式
+            startY += rowHeight;
+            var lblSeparator = CreateLabel("分隔符:", startX, startY, labelWidth);
+            txtSeparator = CreateTextBox(startX + labelWidth + 5, startY, 50);
             txtSeparator.Text = "-";
 
-            cmbFormat = CreateComboBox(startX + labelWidth + 120, startY - 3, 100);
+            var lblFormat = CreateLabel("格式:", startX + 130, startY, 40);
+            cmbFormat = CreateComboBox(startX + 175, startY, 70);
             cmbFormat.Items.AddRange(new object[] { "TIF", "PSD", "JPEG", "PNG" });
             cmbFormat.SelectedIndex = 0;
 
-            cmbCompositeMode = CreateComboBox(startX + labelWidth + 240, startY - 3, 140);
+            var lblMode = CreateLabel("模式:", startX + 260, startY, 40);
+            cmbCompositeMode = CreateComboBox(startX + 305, startY, 100);
             cmbCompositeMode.Items.AddRange(new object[] { "套图标准模式", "满版模式" });
             cmbCompositeMode.SelectedIndex = 0;
 
-            //cmbRotation = CreateComboBox(startX + labelWidth + 240, startY - 3, 80);
-            //cmbRotation.Items.AddRange(new object[] { "0°", "90°", "180°", "270°" });
-            //cmbRotation.SelectedIndex = 0;
-
-            //cmbMirror = CreateComboBox(startX + labelWidth + 340, startY - 3, 100);
-            //cmbMirror.Items.AddRange(new object[] { "无", "水平镜像", "垂直镜像" });
-            //cmbMirror.SelectedIndex = 0;
-
-            startY += rowHeight + 20;
-
-            Label lblSpotTitle = CreateLabel("专色通道设置", startX, startY, 120);
-            lblSpotTitle.Font = new Font("微软雅黑", 10F, FontStyle.Bold);
-
-            startY += rowHeight - 5;
-
+            // 通道设置
+            startY += rowHeight;
             chkWhiteInk = new CheckBox
             {
                 Text = "白墨通道",
-                Location = new Point(startX + labelWidth + 10, startY - 2),
-                Size = new Size(100, 25),
+                Location = new Point(startX + labelWidth + 5, startY + 8),
+                Size = new Size(80, 22),
                 ForeColor = Color.FromArgb(200, 205, 215),
                 BackColor = Color.Transparent,
+                FlatStyle = FlatStyle.Flat,
                 Checked = true
             };
-
-            // txtWhiteInkName = CreateTextBox(startX + labelWidth + 110, startY - 3, 150);
-            // txtWhiteInkName.Text = "White";
 
             chkVarnish = new CheckBox
             {
                 Text = "光油通道",
-                Location = new Point(startX + labelWidth + 270, startY - 2),
-                Size = new Size(100, 25),
+                Location = new Point(startX + labelWidth + 100, startY + 8),
+                Size = new Size(80, 22),
                 ForeColor = Color.FromArgb(200, 205, 215),
                 BackColor = Color.Transparent,
+                FlatStyle = FlatStyle.Flat,
                 Checked = true
             };
 
-            // txtVarnishName = CreateTextBox(startX + labelWidth + 370, startY - 3, 150);
-            // txtVarnishName.Text = "Varnish";
+            // 状态标签
+            lblStatus = new Label
+            {
+                Text = "就绪",
+                Location = new Point(startX + 250, startY + 8),
+                Size = new Size(150, 22),
+                Font = new Font("微软雅黑", 9F),
+                ForeColor = Color.FromArgb(150, 155, 165),
+                BackColor = Color.Transparent
+            };
 
-            startY += rowHeight + 15;
-
-            //chkUseAspose = new CheckBox
-            //{
-            //    Text = "使用 Aspose.PSD（图层模式）",
-            //    Location = new Point(startX, startY),
-            //    Size = new Size(220, 25),
-            //    ForeColor = Color.FromArgb(200, 205, 215),
-            //    BackColor = Color.Transparent,
-            //    Checked = true
-            //};
-            //chkUseAspose.CheckedChanged += (s, e) => { if (chkUseAspose.Checked) chkTifMode.Checked = false; };
-
-            //startY += rowHeight - 5;
-
-            //chkTifMode = new CheckBox
-            //{
-            //    Text = "tif模式",
-            //    Location = new Point(startX, startY),
-            //    Size = new Size(100, 25),
-            //    ForeColor = Color.FromArgb(200, 205, 215),
-            //    BackColor = Color.Transparent,
-            //    Checked = false
-            //};
-            //chkTifMode.CheckedChanged += (s, e) => { if (chkTifMode.Checked) chkUseAspose.Checked = false; };
-
+            // 按钮
             startY += rowHeight + 10;
             btnMerge = new Button
             {
                 Text = "开始套图",
                 Location = new Point(startX, startY),
-                Size = new Size(200, 45),
-                Font = new Font("微软雅黑", 12F),
+                Size = new Size(120, 36),
+                Font = new Font("微软雅黑", 10F),
                 BackColor = Color.FromArgb(45, 100, 160),
                 ForeColor = Color.FromArgb(220, 225, 235),
                 FlatStyle = FlatStyle.Flat,
@@ -283,60 +357,30 @@ namespace WindowsFormsApp1
             btnMerge.FlatAppearance.MouseOverBackColor = Color.FromArgb(55, 120, 180);
             btnMerge.Click += BtnMerge_Click;
 
-            lblStatus = new Label
+            btnClose = new Button
             {
-                Text = "就绪",
-                Location = new Point(startX + 220, startY + 10),
-                Size = new Size(400, 25),
+                Text = "关闭",
+                Location = new Point(startX + 140, startY),
+                Size = new Size(80, 36),
                 Font = new Font("微软雅黑", 10F),
-                ForeColor = Color.FromArgb(150, 155, 165)
+                BackColor = Color.FromArgb(40, 55, 80),
+                ForeColor = Color.FromArgb(220, 225, 235),
+                FlatStyle = FlatStyle.Flat,
+                Cursor = Cursors.Hand
             };
+            btnClose.Click += (s, e) => this.Close();
 
-            startY += rowHeight + 30;
-            //lblPreview = CreateLabel("结果预览:", startX, startY, 100);
-
-            //picResultPreview = new PictureBox
-            //{
-            //    Location = new Point(startX, startY + 30),
-            //    Size = new Size(500, 350),
-            //    BackColor = Color.FromArgb(20, 28, 45),
-            //    SizeMode = PictureBoxSizeMode.Zoom,
-            //    BorderStyle = BorderStyle.FixedSingle
-            //};
-
-            tabTemplateMerge.Controls.Add(lblTemplateFolder);
-            tabTemplateMerge.Controls.Add(txtTemplateFolder);
-            tabTemplateMerge.Controls.Add(btnBrowseTemplateFolder);
-            tabTemplateMerge.Controls.Add(lblMaterialFolder);
-            tabTemplateMerge.Controls.Add(txtMaterialFolder);
-            tabTemplateMerge.Controls.Add(btnBrowseMaterialFolder);
-            tabTemplateMerge.Controls.Add(lblSavePath);
-            tabTemplateMerge.Controls.Add(txtSavePath);
-            tabTemplateMerge.Controls.Add(btnBrowseSavePath);
-            tabTemplateMerge.Controls.Add(lblSeparator);
-            tabTemplateMerge.Controls.Add(txtSeparator);
-            tabTemplateMerge.Controls.Add(cmbFormat);
-            tabTemplateMerge.Controls.Add(cmbCompositeMode);
-            tabTemplateMerge.Controls.Add(lblSpotTitle);
-            tabTemplateMerge.Controls.Add(chkWhiteInk);
-            // tabTemplateMerge.Controls.Add(txtWhiteInkName);
-            tabTemplateMerge.Controls.Add(chkVarnish);
-            // tabTemplateMerge.Controls.Add(txtVarnishName);
-            tabTemplateMerge.Controls.Add(btnMerge);
-            tabTemplateMerge.Controls.Add(lblStatus);
-        }
-
-        private void SetupLayoutTab()
-        {
-            lblLayoutInfo = new Label
-            {
-                Text = "排版功能开发中...",
-                Location = new Point(400, 350),
-                AutoSize = true,
-                Font = new Font("微软雅黑", 16F),
-                ForeColor = Color.FromArgb(150, 155, 165)
-            };
-            tabLayout.Controls.Add(lblLayoutInfo);
+            // 添加所有控件
+            this.Controls.AddRange(new Control[] {
+                lblTemplate, txtTemplateFolder, btnBrowseTemplate,
+                lblMaterial, txtMaterialFolder, btnBrowseMaterial,
+                lblSave, txtSavePath, btnBrowseSave,
+                lblSeparator, txtSeparator,
+                lblFormat, cmbFormat,
+                lblMode, cmbCompositeMode,
+                chkWhiteInk, chkVarnish, lblStatus,
+                btnMerge, btnClose
+            });
         }
 
         private Label CreateLabel(string text, int x, int y, int width)
@@ -345,10 +389,11 @@ namespace WindowsFormsApp1
             {
                 Text = text,
                 Location = new Point(x, y),
-                Size = new Size(width, 25),
-                Font = new Font("微软雅黑", 10F),
+                Size = new Size(width, 22),
+                Font = new Font("微软雅黑", 9F),
                 ForeColor = Color.FromArgb(200, 205, 215),
-                BackColor = Color.Transparent
+                BackColor = Color.Transparent,
+                TextAlign = ContentAlignment.MiddleRight
             };
         }
 
@@ -357,9 +402,9 @@ namespace WindowsFormsApp1
             return new TextBox
             {
                 Location = new Point(x, y),
-                Size = new Size(width, 30),
-                Font = new Font("微软雅黑", 10F),
-                BackColor = Color.FromArgb(35, 45, 65),
+                Size = new Size(width, 24),
+                Font = new Font("微软雅黑", 9F),
+                BackColor = Color.FromArgb(40, 50, 70),
                 ForeColor = Color.FromArgb(220, 225, 235),
                 BorderStyle = BorderStyle.FixedSingle
             };
@@ -370,9 +415,9 @@ namespace WindowsFormsApp1
             return new ComboBox
             {
                 Location = new Point(x, y),
-                Size = new Size(width, 30),
-                Font = new Font("微软雅黑", 10F),
-                BackColor = Color.FromArgb(35, 45, 65),
+                Size = new Size(width, 24),
+                Font = new Font("微软雅黑", 9F),
+                BackColor = Color.FromArgb(40, 50, 70),
                 ForeColor = Color.FromArgb(220, 225, 235),
                 FlatStyle = FlatStyle.Flat,
                 DropDownStyle = ComboBoxStyle.DropDownList
@@ -385,9 +430,9 @@ namespace WindowsFormsApp1
             {
                 Text = text,
                 Location = new Point(x, y),
-                Size = new Size(width, 30),
+                Size = new Size(width, 24),
                 Font = new Font("微软雅黑", 9F),
-                BackColor = Color.FromArgb(40, 55, 80),
+                BackColor = Color.FromArgb(45, 60, 85),
                 ForeColor = Color.FromArgb(220, 225, 235),
                 FlatStyle = FlatStyle.Flat,
                 Cursor = Cursors.Hand
@@ -405,14 +450,40 @@ namespace WindowsFormsApp1
                 if (dialog.ShowDialog() == DialogResult.OK)
                 {
                     textBox.Text = dialog.SelectedPath;
-                    // 保存路径
-                    string settingName = textBox == txtTemplateFolder ? "TemplateFolder" :
-                                         textBox == txtMaterialFolder ? "MaterialFolder" :
-                                         textBox == txtSavePath ? "SavePath" : "";
-                    if (!string.IsNullOrEmpty(settingName))
-                        SavePath(textBox, settingName);
+                    SavePath(textBox);
                 }
             }
+        }
+
+        private void SavePath(TextBox textBox)
+        {
+            try
+            {
+                var settings = Properties.Settings.Default;
+                if (textBox == txtTemplateFolder)
+                    settings.TemplateFolder = textBox.Text;
+                else if (textBox == txtMaterialFolder)
+                    settings.MaterialFolder = textBox.Text;
+                else if (textBox == txtSavePath)
+                    settings.SavePath = textBox.Text;
+                settings.Save();
+            }
+            catch { }
+        }
+
+        private void LoadSavedPaths()
+        {
+            try
+            {
+                var settings = Properties.Settings.Default;
+                if (!string.IsNullOrEmpty(settings.TemplateFolder) && Directory.Exists(settings.TemplateFolder))
+                    txtTemplateFolder.Text = settings.TemplateFolder;
+                if (!string.IsNullOrEmpty(settings.MaterialFolder) && Directory.Exists(settings.MaterialFolder))
+                    txtMaterialFolder.Text = settings.MaterialFolder;
+                if (!string.IsNullOrEmpty(settings.SavePath) && Directory.Exists(settings.SavePath))
+                    txtSavePath.Text = settings.SavePath;
+            }
+            catch { }
         }
 
         private string[] imageExtensions = { ".psd", ".psb", ".tif", ".tiff", ".jpg", ".jpeg", ".png", ".bmp" };
@@ -444,21 +515,6 @@ namespace WindowsFormsApp1
                 i++;
             }
             return file;
-        }
-
-
-        // 预览tif
-        private void previewImage()
-        {
-            using(var preview = AsposePSDHelper.GeneratePreview("D:\\matrials\\2-picture\\粉色海浪玫瑰.tif"))
-            {
-                if (preview != null)
-                {
-                    DisplayPreview(preview);
-                    preview.Dispose();
-                }
-            }
-           
         }
 
         private void BtnMerge_Click(object sender, EventArgs e)
@@ -517,14 +573,8 @@ namespace WindowsFormsApp1
                 string baseName = GetBaseName(templateFile) + separator + GetBaseName(materialFile);
                 string outputFile = NextOutputFile(txtSavePath.Text, baseName, ext);
 
-                //PSDAnalyzer.AnalyzePSD(materialFile);
-
                 Console.WriteLine($"模版路径名称：{templateFile}");
                 Console.WriteLine($"素材路径名称：{materialFile}");
-
-               
-                //if (chkTifMode.Checked)
-                //{
                 Console.WriteLine($"套图模式：{compositeModeName}");
 
                 AsposePSDHelper.ProcessTifMode(
@@ -540,33 +590,10 @@ namespace WindowsFormsApp1
                     compositeMode,
                     exclusionMaskPath);
 
-                lblStatus.Text = "正在生成预览...";
-                Application.DoEvents();
-                Console.WriteLine($"输出路径名称：{outputFile}");
-
+                ResultPath = outputFile;
                 lblStatus.Text = "完成！";
+                Console.WriteLine($"输出路径名称：{outputFile}");
                 MessageBox.Show($"{compositeModeName}完成！\n保存路径: {outputFile}", "成功", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                //}
-                //else if (chkUseAspose.Checked)
-                //{
-                // psd模式贴图
-
-                //PSDAnalyzer.AnalyzeAndMatchLayer(templateFile, materialFile, outputFile,
-                //    chkWhiteInk.Checked, chkVarnish.Checked,
-                //    chkWhiteInk.Checked ? txtWhiteInkName.Text : null,
-                //    chkVarnish.Checked ? txtVarnishName.Text : null);
-
-                //lblStatus.Text = "正在生成预览...";
-                //Application.DoEvents();
-                //Console.WriteLine($"输出路径名称：{outputFile}");
-
-                //lblStatus.Text = "完成！";
-                //MessageBox.Show($"套图完成！\n保存路径: {outputFile}", "成功", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                //}
-                //else
-                //{
-                //    MessageBox.Show("请选择一种处理模式", "提示", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                //}
             }
             catch (Exception ex)
             {
@@ -579,31 +606,11 @@ namespace WindowsFormsApp1
                 btnMerge.Text = "开始套图";
             }
         }
-
-        private void DisplayPreview(Bitmap preview)
-        {
-            Bitmap scaled = new Bitmap(picResultPreview.Width, picResultPreview.Height);
-            using (Graphics g = Graphics.FromImage(scaled))
-            {
-                g.Clear(Color.FromArgb(20, 28, 45));
-
-                int imgW = preview.Width;
-                int imgH = preview.Height;
-                float ratio = Math.Min((float)picResultPreview.Width / imgW, (float)picResultPreview.Height / imgH);
-                int newW = (int)(imgW * ratio);
-                int newH = (int)(imgH * ratio);
-                int px = (picResultPreview.Width - newW) / 2;
-                int py = (picResultPreview.Height - newH) / 2;
-
-                g.DrawImage(preview, px, py, newW, newH);
-            }
-            picResultPreview.Image = scaled;
-        }
-
-      
-
-       
-            
-        
+    }
+        public class GuideLine
+    {
+        public bool IsHorizontal { get; set; }
+        public float Position { get; set; }
+        public Color Color { get; set; }
     }
 }
