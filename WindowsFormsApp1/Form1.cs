@@ -12,13 +12,18 @@ namespace WindowsFormsApp1
     public partial class Form1 : Form
     {
         private RulerCanvas canvas;
+        private Panel workspacePanel;
+        private Panel leftToolPanel;
         private Label lblStatus;
         private Label lblZoom;
         private Button btnMergeTool;
+        private Button btnMoveTool;
+        private ToolTip toolbarToolTip;
 
         private TrackBar zoomTrackBar;
         private Label zoomLabel;
         private Button resetZoomButton;
+        private CanvasTool currentTool = CanvasTool.Move;
 
         public Form1()
         {
@@ -132,12 +137,51 @@ namespace WindowsFormsApp1
 
         private void SetupCanvas()
         {
+            workspacePanel = new Panel
+            {
+                Dock = DockStyle.Fill,
+                BackColor = Color.FromArgb(25, 35, 55)
+            };
+            this.Controls.Add(workspacePanel);
+
+            toolbarToolTip = new ToolTip();
+
             canvas = new RulerCanvas
             {
                 Dock = DockStyle.Fill,
-                BackColor = Color.FromArgb(35, 40, 50)
+                BackColor = Color.FromArgb(35, 40, 50),
+                ActiveTool = CanvasTool.Move
             };
-            this.Controls.Add(canvas);
+            workspacePanel.Controls.Add(canvas);
+
+            leftToolPanel = new Panel
+            {
+                Dock = DockStyle.Left,
+                Width = 52,
+                BackColor = Color.FromArgb(58, 58, 58),
+                Padding = new Padding(4, 8, 4, 4)
+            };
+            workspacePanel.Controls.Add(leftToolPanel);
+
+            btnMoveTool = new Button
+            {
+                Text = "✥",
+                Dock = DockStyle.Top,
+                Height = 44,
+                Font = new Font("Segoe UI Symbol", 13F, FontStyle.Regular),
+                ForeColor = Color.White,
+                FlatStyle = FlatStyle.Flat,
+                Cursor = Cursors.Hand,
+                TextAlign = ContentAlignment.MiddleCenter,
+                UseCompatibleTextRendering = true,
+                Margin = new Padding(0)
+            };
+            btnMoveTool.FlatAppearance.BorderSize = 0;
+            btnMoveTool.Click += (s, e) => SetCanvasTool(CanvasTool.Move);
+            toolbarToolTip.SetToolTip(btnMoveTool, "移动工具");
+            leftToolPanel.Controls.Add(btnMoveTool);
+
+            SetCanvasTool(CanvasTool.Move);
         }
 
         private void SetupStatusBar()
@@ -217,6 +261,24 @@ namespace WindowsFormsApp1
                 float newZoom = zoomTrackBar.Value / 100f;
                 canvas.SetZoom(newZoom);
                 zoomLabel.Text = $"缩放: {zoomTrackBar.Value}%";
+            }
+        }
+
+        private void SetCanvasTool(CanvasTool tool)
+        {
+            currentTool = tool;
+
+            if (canvas != null)
+            {
+                canvas.ActiveTool = tool;
+            }
+
+            if (btnMoveTool != null)
+            {
+                bool isActive = tool == CanvasTool.Move;
+                btnMoveTool.BackColor = isActive ? Color.FromArgb(20, 20, 20) : Color.FromArgb(90, 90, 90);
+                btnMoveTool.FlatAppearance.BorderColor = isActive ? Color.FromArgb(20, 20, 20) : Color.FromArgb(90, 90, 90);
+                btnMoveTool.FlatAppearance.MouseOverBackColor = isActive ? Color.FromArgb(32, 32, 32) : Color.FromArgb(110, 110, 110);
             }
         }
     }

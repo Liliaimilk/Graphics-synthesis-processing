@@ -866,6 +866,13 @@ namespace WindowsFormsApp1
                 }
             }
         }
+        // 辅助类
+        class SpotColorInfo
+        {
+            public string Name { get; set; }
+            public byte[] Color { get; set; } // RGB
+            public byte Opacity { get; set; }
+        }
 
         private static void SaveAsCmykTiffWithExtraChannels(Bitmap bitmap, string outputPath, bool addWhiteInk, bool addVarnish, string whiteInkChannelName, string varnishChannelName)
         {

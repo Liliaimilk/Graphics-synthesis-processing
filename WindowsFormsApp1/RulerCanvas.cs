@@ -11,6 +11,7 @@ using System.Windows.Forms;
 namespace WindowsFormsApp1
 {
     public enum BackgroundStyle { Checkerboard, White }
+    public enum CanvasTool { None, Move }
 
     public class RulerCanvas : Control
     {
@@ -55,13 +56,14 @@ namespace WindowsFormsApp1
         private bool _showGuides = true;
         private Point _lastMousePos = Point.Empty;
         private BackgroundStyle _bgStyle = BackgroundStyle.White;
+        private CanvasTool _activeTool = CanvasTool.Move;
 
         public event Action<float> ZoomChanged;
 
         public RulerCanvas()
         {
             SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.UserPaint, true);
-            Cursor = Cursors.Cross;
+            Cursor = Cursors.Default;
             AllowDrop = true;
 
             CreateCheckerboard();
@@ -85,6 +87,19 @@ namespace WindowsFormsApp1
         }
 
         public BackgroundStyle GetBackgroundStyle() => _bgStyle;
+
+        public CanvasTool ActiveTool
+        {
+            get => _activeTool;
+            set
+            {
+                _activeTool = value;
+                if (!_isDraggingImage && !_isPanning)
+                {
+                    UpdateIdleCursor(_lastMousePos);
+                }
+            }
+        }
 
         public void LoadImage(Bitmap bitmap)
         {
@@ -319,6 +334,7 @@ namespace WindowsFormsApp1
         protected override void OnMouseDown(MouseEventArgs e)
         {
             base.OnMouseDown(e);
+            _lastMousePos = e.Location;
 
             if (e.Button != MouseButtons.Left)
             {
@@ -339,10 +355,18 @@ namespace WindowsFormsApp1
             if (hitImage != null)
             {
                 SelectImage(hitImage, true);
-                _isDraggingImage = true;
-                _panStart = e.Location;
-                _dragImageStartWorld = hitImage.WorldLocation;
-                Cursor = Cursors.SizeAll;
+                if (_activeTool == CanvasTool.Move)
+                {
+                    _isDraggingImage = true;
+                    _panStart = e.Location;
+                    _dragImageStartWorld = hitImage.WorldLocation;
+                    Cursor = Cursors.SizeAll;
+                }
+                else
+                {
+                    UpdateIdleCursor(e.Location);
+                    Invalidate();
+                }
                 return;
             }
 
@@ -385,6 +409,7 @@ namespace WindowsFormsApp1
                 return;
             }
 
+            UpdateIdleCursor(e.Location);
             Invalidate();
         }
 
@@ -394,7 +419,7 @@ namespace WindowsFormsApp1
             _isPanning = false;
             _isDraggingImage = false;
             _draggingGuide = null;
-            Cursor = Cursors.Cross;
+            UpdateIdleCursor(e.Location);
         }
 
         protected override void OnResize(EventArgs e)
@@ -954,6 +979,17 @@ namespace WindowsFormsApp1
             }
 
             return null;
+        }
+
+        private void UpdateIdleCursor(Point location)
+        {
+            if (_activeTool == CanvasTool.Move && HitTestImage(location) != null)
+            {
+                Cursor = Cursors.SizeAll;
+                return;
+            }
+
+            Cursor = Cursors.Default;
         }
 
         private void SelectImage(CanvasImageItem item, bool bringToFront)
