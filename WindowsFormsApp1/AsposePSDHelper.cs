@@ -958,6 +958,7 @@ namespace WindowsFormsApp1
                                 var pixel = pixels.GetPixel(x, y);
                                 byte alpha = (byte)((sourceData.Pixels[pixelIndex] >> 24) & 0xFF);
                                 byte placeholderValue = alpha;
+                                Console.WriteLine($"像素[{x},{y}] - Alpha: {alpha}");
 
                                 scanline[destIdx + 0] = pixel.GetChannel(0);
                                 scanline[destIdx + 1] = pixel.GetChannel(1);
@@ -1005,7 +1006,6 @@ namespace WindowsFormsApp1
         {
             var block = new List<byte>();
             block.AddRange(BuildPascalChannelNamesResource(extraChannelNames));
-            block.AddRange(BuildUnicodeChannelNamesResource(extraChannelNames));
             return block.ToArray();
         }
 
@@ -1021,28 +1021,13 @@ namespace WindowsFormsApp1
 
                 data.Add((byte)nameBytes.Length);
                 data.AddRange(nameBytes);
+
+                int recordLength = 1 + nameBytes.Length;
+                if ((recordLength % 2) != 0)
+                    data.Add(0x00);
             }
 
             return BuildPhotoshopResourceBlock(0x03EE, data);
-        }
-
-        private static byte[] BuildUnicodeChannelNamesResource(List<string> extraChannelNames)
-        {
-            var data = new List<byte>();
-            foreach (string name in extraChannelNames)
-            {
-                string channelName = name ?? string.Empty;
-                byte[] nameBytes = Encoding.BigEndianUnicode.GetBytes(channelName);
-                int charCount = channelName.Length;
-
-                data.Add((byte)((charCount >> 24) & 0xFF));
-                data.Add((byte)((charCount >> 16) & 0xFF));
-                data.Add((byte)((charCount >> 8) & 0xFF));
-                data.Add((byte)(charCount & 0xFF));
-                data.AddRange(nameBytes);
-            }
-
-            return BuildPhotoshopResourceBlock(0x0415, data);
         }
 
         private static byte[] BuildPhotoshopResourceBlock(int resourceId, List<byte> data)
