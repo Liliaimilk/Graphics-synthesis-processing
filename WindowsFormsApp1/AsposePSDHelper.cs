@@ -66,19 +66,23 @@ namespace WindowsFormsApp1
             int offsetX = 0,
             int offsetY = 0,
             TemplateCompositeMode compositeMode = TemplateCompositeMode.Standard,
-            string exclusionMaskPath = null)
+            string exclusionMaskPath = null,
+            Action controlCheckpoint = null)
         {
             try
             {
+                controlCheckpoint?.Invoke();
                 progressCallback?.Invoke("正在读取模板...");
                 var backgroundData = LoadImagePixelData(templateTifPath);
 
+                controlCheckpoint?.Invoke();
                 progressCallback?.Invoke("正在读取素材...");
                 var foregroundData = LoadImagePixelData(materialTifPath);
 
                 ImagePixelData exclusionMaskData = null;
                 if (compositeMode == TemplateCompositeMode.FullBleed && !string.IsNullOrWhiteSpace(exclusionMaskPath))
                 {
+                    controlCheckpoint?.Invoke();
                     progressCallback?.Invoke("正在读取摄像头遮罩...");
                     exclusionMaskData = LoadImagePixelData(exclusionMaskPath);
                     Console.WriteLine($"摄像头遮罩路径: {exclusionMaskPath}");
@@ -95,7 +99,8 @@ namespace WindowsFormsApp1
                     progressCallback?.Invoke("素材没有可用的非透明内容");
                     using (var emptyBitmap = CreateBitmapFromArgbPixels(backgroundData.Width, backgroundData.Height, backgroundData.Pixels))
                     {
-                        SaveMergedAsFormat(emptyBitmap, outputPath, format);
+                        controlCheckpoint?.Invoke();
+                        SaveMergedAsFormat(emptyBitmap, outputPath, format, whiteInkChannelName, varnishChannelName);
                     }
                     return;
                 }
@@ -105,6 +110,7 @@ namespace WindowsFormsApp1
                     Console.WriteLine("警告: 素材读取后非透明区域等于整张画布，说明 TIFF 透明信息可能已在读取阶段丢失。");
                 }
 
+                controlCheckpoint?.Invoke();
                 progressCallback?.Invoke(compositeMode == TemplateCompositeMode.FullBleed ? "正在满版合成图像..." : "正在标准套图合成图像...");
                 if (compositeMode == TemplateCompositeMode.FullBleed)
                 {
@@ -115,20 +121,22 @@ namespace WindowsFormsApp1
                     if (templateBounds.Width == backgroundData.Width && templateBounds.Height == backgroundData.Height)
                         Console.WriteLine("警告: 模板非透明区域等于整张画布，满版模式会铺满整张画布。请确认模板透明信息是否读取正确。");
 
-                    DrawFullBleedPixels(backgroundData, foregroundData, templateBounds, opaqueBounds, exclusionMaskData);
+                    DrawFullBleedPixels(backgroundData, foregroundData, templateBounds, opaqueBounds, exclusionMaskData, controlCheckpoint);
                 }
                 else
                 {
                     Console.WriteLine($"素材贴图偏移: offsetX={offsetX}, offsetY={offsetY}");
-                    DrawNonTransparentPixels(backgroundData, foregroundData, opaqueBounds, offsetX, offsetY);
+                    DrawNonTransparentPixels(backgroundData, foregroundData, opaqueBounds, offsetX, offsetY, controlCheckpoint);
                 }
 
                 using (var mergedBitmap = CreateBitmapFromArgbPixels(backgroundData.Width, backgroundData.Height, backgroundData.Pixels))
                 {
+                    controlCheckpoint?.Invoke();
                     progressCallback?.Invoke("正在保存结果...");
                     SaveMergedAsFormat(mergedBitmap, outputPath, format, whiteInkChannelName, varnishChannelName);
                 }
 
+                controlCheckpoint?.Invoke();
                 progressCallback?.Invoke("完成");
             }
             catch (OutOfMemoryException ex)
@@ -444,7 +452,8 @@ namespace WindowsFormsApp1
             ImagePixelData foreground,
             Rectangle opaqueBounds,
             int offsetX,
-            int offsetY)
+            int offsetY,
+            Action controlCheckpoint = null)
         {
             if (background == null)
                 throw new ArgumentNullException(nameof(background));
@@ -467,6 +476,11 @@ namespace WindowsFormsApp1
 
             for (int destY = drawBounds.Top; destY < drawBounds.Bottom; destY++)
             {
+                if ((destY - drawBounds.Top) % 32 == 0)
+                {
+                    controlCheckpoint?.Invoke();
+                }
+
                 int sourceY = destY - offsetY;
                 int backgroundRow = destY * background.Width;
                 int foregroundRow = sourceY * foreground.Width;
@@ -486,7 +500,8 @@ namespace WindowsFormsApp1
             ImagePixelData foreground,
             Rectangle templateBounds,
             Rectangle materialBounds,
-            ImagePixelData exclusionMask)
+            ImagePixelData exclusionMask,
+            Action controlCheckpoint = null)
         {
             if (background == null)
                 throw new ArgumentNullException(nameof(background));
@@ -506,6 +521,11 @@ namespace WindowsFormsApp1
 
             for (int destY = templateBounds.Top; destY < templateBounds.Bottom; destY++)
             {
+                if ((destY - templateBounds.Top) % 32 == 0)
+                {
+                    controlCheckpoint?.Invoke();
+                }
+
                 if (destY < 0 || destY >= background.Height)
                     continue;
 
@@ -830,7 +850,7 @@ namespace WindowsFormsApp1
 
         private static void SaveAsPsd(Bitmap bitmap, string outputPath)
         {
-            bitmap.Save(outputPath.Replace(".psd", ".png"), ImageFormat.Png);
+            throw new NotSupportedException("当前版本暂不支持真实 PSD 导出，请改用 TIF、PNG 或 JPEG。");
         }
 
         private static void SaveAsTiffWithSpotChannels(Bitmap bitmap, string outputPath, string whiteInkChannelName = null, string varnishChannelName = null)

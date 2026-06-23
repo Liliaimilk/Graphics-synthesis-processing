@@ -173,7 +173,7 @@ namespace RulerGridApp
                     }
                 }
 
-                for (int y = (startY / gridSize) * gridSize; y <= endY; y += gridSize)
+                for (int y = (startY / gridSize) * gridSize; y <= endY; y += gridSize) 
                 {
                     int screenY = y - startY + RulerSize;
                     if (screenY >= RulerSize && screenY <= this.ClientSize.Height)

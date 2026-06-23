@@ -1,10 +1,13 @@
 using RulerGridApp;
 using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.IO;
 using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 using System.Windows.Forms;
 
 namespace WindowsFormsApp1
@@ -63,7 +66,6 @@ namespace WindowsFormsApp1
             };
             this.Controls.Add(toolbarPanel);
 
-            // 套图工具按钮
             btnMergeTool = new Button
             {
                 Text = "套图",
@@ -80,7 +82,6 @@ namespace WindowsFormsApp1
             btnMergeTool.FlatAppearance.MouseOverBackColor = Color.FromArgb(55, 120, 180);
             btnMergeTool.Click += BtnMergeTool_Click;
 
-            // 缩放标签
             zoomLabel = new Label
             {
                 Text = "缩放: 100%",
@@ -92,7 +93,6 @@ namespace WindowsFormsApp1
                 TextAlign = ContentAlignment.MiddleLeft
             };
 
-            // 缩放滑块 (10% - 300%)
             zoomTrackBar = new TrackBar
             {
                 Location = new Point(175, 10),
@@ -105,7 +105,6 @@ namespace WindowsFormsApp1
             };
             zoomTrackBar.ValueChanged += ZoomTrackBar_ValueChanged;
 
-            // 重置按钮
             resetZoomButton = new Button
             {
                 Text = "重置",
@@ -124,7 +123,6 @@ namespace WindowsFormsApp1
             toolbarPanel.Controls.Add(zoomTrackBar);
             toolbarPanel.Controls.Add(resetZoomButton);
 
-            // 同步 canvas 缩放事件到工具栏
             if (canvas != null)
             {
                 canvas.ZoomChanged += (zoom) =>
@@ -226,26 +224,48 @@ namespace WindowsFormsApp1
             using (var dialog = new MergeDialog())
             {
                 dialog.Owner = this;
-                if (dialog.ShowDialog() == DialogResult.OK && !string.IsNullOrEmpty(dialog.ResultPath))
+                if (dialog.ShowDialog(this) == DialogResult.OK)
                 {
-                    LoadResultToCanvas(dialog.ResultPath);
+                    if (dialog.ResultPaths != null && dialog.ResultPaths.Count > 1)
+                    {
+                        LoadResultsToCanvas(dialog.ResultPaths);
+                    }
+                    else if (!string.IsNullOrEmpty(dialog.ResultPath))
+                    {
+                        LoadResultToCanvas(dialog.ResultPath);
+                    }
                 }
             }
         }
 
         private void LoadResultToCanvas(string path)
         {
+            LoadResultsToCanvas(new[] { path });
+        }
+
+        private void LoadResultsToCanvas(IEnumerable<string> paths)
+        {
             try
             {
+                var validPaths = (paths ?? Enumerable.Empty<string>())
+                    .Where(path => !string.IsNullOrWhiteSpace(path) && File.Exists(path))
+                    .ToList();
+
+                if (validPaths.Count == 0)
+                {
+                    return;
+                }
+
                 lblStatus.Text = "加载图片...";
                 Application.DoEvents();
 
-                using (var resultBitmap = new Bitmap(path))
+                canvas.ClearScene();
+                foreach (string path in validPaths)
                 {
-                    canvas.LoadImage(new Bitmap(resultBitmap));
+                    canvas.LoadImageFromFile(path);
                 }
 
-                lblStatus.Text = "完成！";
+                lblStatus.Text = validPaths.Count == 1 ? "完成！" : $"已加载 {validPaths.Count} 张图片";
             }
             catch (Exception ex)
             {
@@ -283,9 +303,12 @@ namespace WindowsFormsApp1
         }
     }
 
-    // ========== 套图弹窗 ==========
     public class MergeDialog : Form
     {
+        private const int DialogWidth = 760;
+        private const int SingleDialogHeight = 380;
+        private const int BatchDialogHeight = 720;
+
         private TextBox txtTemplateFolder;
         private TextBox txtMaterialFolder;
         private TextBox txtSavePath;
@@ -294,32 +317,109 @@ namespace WindowsFormsApp1
         private ComboBox cmbCompositeMode;
         private CheckBox chkWhiteInk;
         private CheckBox chkVarnish;
+        private CheckBox chkBatchMode;
         private Button btnMerge;
         private Label lblStatus;
         private Button btnClose;
+        private Button btnBrowseTemplate;
+        private Button btnBrowseMaterial;
+        private Button btnBrowseSave;
+        private Panel pnlBatch;
+        private ProgressBar prgBatch;
+        private Label lblBatchSummary;
+        private ListView lvResults;
+        private Button btnPauseResume;
+        private Button btnCancel;
+
+        private bool isRunning;
+        private bool canReturnResults;
+        private BatchRunState batchState;
+
+        private readonly string[] imageExtensions = { ".psd", ".psb", ".tif", ".tiff", ".jpg", ".jpeg", ".png", ".bmp" };
 
         public string ResultPath { get; private set; }
+        public IReadOnlyList<string> ResultPaths { get; private set; } = Array.Empty<string>();
+
+        private enum MergeJobStatus
+        {
+            Pending,
+            Validating,
+            Running,
+            Completed,
+            Failed,
+            Canceled,
+            Skipped
+        }
+
+        private sealed class MergeJobItem
+        {
+            public int Index { get; set; }
+            public string TemplatePath { get; set; }
+            public string MaterialPath { get; set; }
+            public string OutputPath { get; set; }
+            public MergeJobStatus Status { get; set; }
+            public string Message { get; set; }
+            public ListViewItem ListItem { get; set; }
+        }
+
+        private sealed class BatchRunState : IDisposable
+        {
+            public BatchRunState(List<MergeJobItem> jobs)
+            {
+                Jobs = jobs ?? new List<MergeJobItem>();
+                SuccessOutputPaths = new List<string>();
+                CancellationSource = new CancellationTokenSource();
+                PauseGate = new ManualResetEventSlim(true);
+            }
+
+            public List<MergeJobItem> Jobs { get; }
+            public List<string> SuccessOutputPaths { get; }
+            public CancellationTokenSource CancellationSource { get; }
+            public ManualResetEventSlim PauseGate { get; }
+            public bool IsPaused { get; set; }
+
+            public void Dispose()
+            {
+                PauseGate.Dispose();
+                CancellationSource.Dispose();
+            }
+        }
+
+        private sealed class BuildJobsResult
+        {
+            public bool IsBatchMode { get; set; }
+            public string TemplateFile { get; set; }
+            public List<MergeJobItem> Jobs { get; set; }
+            public string Format { get; set; }
+            public string CompositeModeName { get; set; }
+            public TemplateCompositeMode CompositeMode { get; set; }
+            public string ExclusionMaskPath { get; set; }
+        }
+
+        private sealed class ValidationResult
+        {
+            public bool IsValid { get; set; }
+            public string ErrorMessage { get; set; }
+        }
 
         public MergeDialog()
         {
             SetupDarkTheme();
             SetupControls();
             LoadSavedPaths();
+            this.FormClosing += MergeDialog_FormClosing;
         }
 
         private void SetupDarkTheme()
         {
             this.Text = "套图";
-            this.Size = new Size(520, 380);
+            this.Size = new Size(DialogWidth, SingleDialogHeight);
             this.StartPosition = FormStartPosition.CenterParent;
             this.FormBorderStyle = FormBorderStyle.FixedDialog;
             this.MaximizeBox = false;
             this.MinimizeBox = false;
             this.BackColor = Color.FromArgb(25, 35, 55);
             this.ForeColor = Color.FromArgb(220, 225, 235);
-
-            // 居中显示
-            this.StartPosition = FormStartPosition.CenterParent;
         }
 
         private void SetupControls()
@@ -328,46 +428,41 @@ namespace WindowsFormsApp1
             int startY = 20;
             int rowHeight = 40;
             int labelWidth = 80;
-            int textBoxWidth = 320;
+            int textBoxWidth = 520;
             int btnWidth = 60;
 
-            // 模版文件夹
             var lblTemplate = CreateLabel("模版:", startX, startY, labelWidth);
             txtTemplateFolder = CreateTextBox(startX + labelWidth + 5, startY, textBoxWidth);
-            var btnBrowseTemplate = CreateButton("浏览", startX + labelWidth + textBoxWidth + 10, startY, btnWidth);
+            btnBrowseTemplate = CreateButton("浏览", startX + labelWidth + textBoxWidth + 10, startY, btnWidth);
             btnBrowseTemplate.Click += (s, e) => BrowseFolder(txtTemplateFolder);
 
-            // 素材文件夹
             startY += rowHeight;
             var lblMaterial = CreateLabel("素材:", startX, startY, labelWidth);
             txtMaterialFolder = CreateTextBox(startX + labelWidth + 5, startY, textBoxWidth);
-            var btnBrowseMaterial = CreateButton("浏览", startX + labelWidth + textBoxWidth + 10, startY, btnWidth);
+            btnBrowseMaterial = CreateButton("浏览", startX + labelWidth + textBoxWidth + 10, startY, btnWidth);
             btnBrowseMaterial.Click += (s, e) => BrowseFolder(txtMaterialFolder);
 
-            // 保存路径
             startY += rowHeight;
             var lblSave = CreateLabel("保存:", startX, startY, labelWidth);
             txtSavePath = CreateTextBox(startX + labelWidth + 5, startY, textBoxWidth);
-            var btnBrowseSave = CreateButton("浏览", startX + labelWidth + textBoxWidth + 10, startY, btnWidth);
+            btnBrowseSave = CreateButton("浏览", startX + labelWidth + textBoxWidth + 10, startY, btnWidth);
             btnBrowseSave.Click += (s, e) => BrowseFolder(txtSavePath);
 
-            // 分隔符 + 格式 + 模式
             startY += rowHeight;
             var lblSeparator = CreateLabel("分隔符:", startX, startY, labelWidth);
             txtSeparator = CreateTextBox(startX + labelWidth + 5, startY, 50);
             txtSeparator.Text = "-";
 
-            var lblFormat = CreateLabel("格式:", startX + 130, startY, 40);
-            cmbFormat = CreateComboBox(startX + 175, startY, 70);
+            var lblFormat = CreateLabel("格式:", startX + 145, startY, 40);
+            cmbFormat = CreateComboBox(startX + 190, startY, 80);
             cmbFormat.Items.AddRange(new object[] { "TIF", "PSD", "JPEG", "PNG" });
             cmbFormat.SelectedIndex = 0;
 
-            var lblMode = CreateLabel("模式:", startX + 260, startY, 40);
-            cmbCompositeMode = CreateComboBox(startX + 305, startY, 100);
+            var lblMode = CreateLabel("模式:", startX + 290, startY, 40);
+            cmbCompositeMode = CreateComboBox(startX + 335, startY, 110);
             cmbCompositeMode.Items.AddRange(new object[] { "套图标准模式", "满版模式" });
             cmbCompositeMode.SelectedIndex = 0;
 
-            // 通道设置
             startY += rowHeight;
             chkWhiteInk = new CheckBox
             {
@@ -391,18 +486,28 @@ namespace WindowsFormsApp1
                 Checked = true
             };
 
-            // 状态标签
+            chkBatchMode = new CheckBox
+            {
+                Text = "批量套图",
+                Location = new Point(startX + labelWidth + 200, startY + 8),
+                Size = new Size(90, 22),
+                ForeColor = Color.FromArgb(200, 205, 215),
+                BackColor = Color.Transparent,
+                FlatStyle = FlatStyle.Flat,
+                Checked = false
+            };
+            chkBatchMode.CheckedChanged += (s, e) => ToggleBatchModeLayout();
+
             lblStatus = new Label
             {
                 Text = "就绪",
-                Location = new Point(startX + 250, startY + 8),
-                Size = new Size(150, 22),
+                Location = new Point(startX + 380, startY + 8),
+                Size = new Size(300, 22),
                 Font = new Font("微软雅黑", 9F),
                 ForeColor = Color.FromArgb(150, 155, 165),
                 BackColor = Color.Transparent
             };
 
-            // 按钮
             startY += rowHeight + 10;
             btnMerge = new Button
             {
@@ -430,9 +535,95 @@ namespace WindowsFormsApp1
                 FlatStyle = FlatStyle.Flat,
                 Cursor = Cursors.Hand
             };
-            btnClose.Click += (s, e) => this.Close();
+            btnClose.Click += BtnClose_Click;
 
-            // 添加所有控件
+            pnlBatch = new Panel
+            {
+                Location = new Point(startX, startY + 55),
+                Size = new Size(DialogWidth - 56, 300),
+                BackColor = Color.FromArgb(30, 40, 60),
+                BorderStyle = BorderStyle.FixedSingle,
+                Visible = false,
+                Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Bottom
+            };
+
+            prgBatch = new ProgressBar
+            {
+                Location = new Point(12, 12),
+                Size = new Size(pnlBatch.Width - 24, 18),
+                Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
+                Minimum = 0,
+                Maximum = 1,
+                Value = 0
+            };
+
+            lblBatchSummary = new Label
+            {
+                Text = "等待批量任务",
+                Location = new Point(12, 38),
+                Size = new Size(pnlBatch.Width - 24, 22),
+                Font = new Font("微软雅黑", 9F),
+                ForeColor = Color.FromArgb(200, 205, 215),
+                BackColor = Color.Transparent,
+                Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right
+            };
+
+            lvResults = new ListView
+            {
+                Location = new Point(12, 68),
+                Size = new Size(pnlBatch.Width - 24, 190),
+                View = View.Details,
+                FullRowSelect = true,
+                GridLines = true,
+                MultiSelect = false,
+                HideSelection = false,
+                BackColor = Color.FromArgb(40, 50, 70),
+                ForeColor = Color.FromArgb(220, 225, 235),
+                BorderStyle = BorderStyle.FixedSingle,
+                Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right
+            };
+            lvResults.Columns.Add("序号", 50);
+            lvResults.Columns.Add("素材", 180);
+            lvResults.Columns.Add("状态", 90);
+            lvResults.Columns.Add("输出文件", 220);
+            lvResults.Columns.Add("消息", 140);
+
+            btnPauseResume = new Button
+            {
+                Text = "暂停",
+                Location = new Point(pnlBatch.Width - 190, pnlBatch.Height - 42),
+                Size = new Size(80, 28),
+                Font = new Font("微软雅黑", 9F),
+                BackColor = Color.FromArgb(45, 60, 85),
+                ForeColor = Color.FromArgb(220, 225, 235),
+                FlatStyle = FlatStyle.Flat,
+                Cursor = Cursors.Hand,
+                Anchor = AnchorStyles.Right | AnchorStyles.Bottom,
+                Enabled = false
+            };
+            btnPauseResume.Click += BtnPauseResume_Click;
+
+            btnCancel = new Button
+            {
+                Text = "取消",
+                Location = new Point(pnlBatch.Width - 100, pnlBatch.Height - 42),
+                Size = new Size(80, 28),
+                Font = new Font("微软雅黑", 9F),
+                BackColor = Color.FromArgb(115, 55, 55),
+                ForeColor = Color.FromArgb(220, 225, 235),
+                FlatStyle = FlatStyle.Flat,
+                Cursor = Cursors.Hand,
+                Anchor = AnchorStyles.Right | AnchorStyles.Bottom,
+                Enabled = false
+            };
+            btnCancel.Click += BtnCancel_Click;
+
+            pnlBatch.Controls.Add(prgBatch);
+            pnlBatch.Controls.Add(lblBatchSummary);
+            pnlBatch.Controls.Add(lvResults);
+            pnlBatch.Controls.Add(btnPauseResume);
+            pnlBatch.Controls.Add(btnCancel);
+
             this.Controls.AddRange(new Control[] {
                 lblTemplate, txtTemplateFolder, btnBrowseTemplate,
                 lblMaterial, txtMaterialFolder, btnBrowseMaterial,
@@ -440,9 +631,27 @@ namespace WindowsFormsApp1
                 lblSeparator, txtSeparator,
                 lblFormat, cmbFormat,
                 lblMode, cmbCompositeMode,
-                chkWhiteInk, chkVarnish, lblStatus,
-                btnMerge, btnClose
+                chkWhiteInk, chkVarnish, chkBatchMode, lblStatus,
+                btnMerge, btnClose,
+                pnlBatch
             });
+
+            ToggleBatchModeLayout();
+        }
+
+        private void MergeDialog_FormClosing(object sender, FormClosingEventArgs e)
+        {
+            if (isRunning)
+            {
+                e.Cancel = true;
+                MessageBox.Show("当前任务正在执行，请先取消任务后再关闭窗口。", "提示", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            if (canReturnResults && this.DialogResult != DialogResult.OK && e.CloseReason == CloseReason.UserClosing)
+            {
+                this.DialogResult = DialogResult.OK;
+            }
         }
 
         private Label CreateLabel(string text, int x, int y, int width)
@@ -501,6 +710,21 @@ namespace WindowsFormsApp1
             };
         }
 
+        private void ToggleBatchModeLayout()
+        {
+            pnlBatch.Visible = chkBatchMode.Checked;
+            this.Size = new Size(DialogWidth, chkBatchMode.Checked ? BatchDialogHeight : SingleDialogHeight);
+            btnMerge.Text = isRunning ? "处理中..." : (chkBatchMode.Checked ? "开始批量套图" : "开始套图");
+
+            if (!chkBatchMode.Checked && !isRunning)
+            {
+                lvResults.Items.Clear();
+                prgBatch.Maximum = 1;
+                prgBatch.Value = 0;
+                lblBatchSummary.Text = "等待批量任务";
+            }
+        }
+
         private void BrowseFolder(TextBox textBox)
         {
             using (FolderBrowserDialog dialog = new FolderBrowserDialog())
@@ -548,16 +772,20 @@ namespace WindowsFormsApp1
             catch { }
         }
 
-        private string[] imageExtensions = { ".psd", ".psb", ".tif", ".tiff", ".jpg", ".jpeg", ".png", ".bmp" };
+        private List<string> GetImageFiles(string folderPath)
+        {
+            if (!Directory.Exists(folderPath))
+                return new List<string>();
+
+            return Directory.GetFiles(folderPath)
+                .Where(f => imageExtensions.Contains(Path.GetExtension(f).ToLowerInvariant()))
+                .OrderBy(f => f)
+                .ToList();
+        }
 
         private string FindFirstImage(string folderPath)
         {
-            if (!Directory.Exists(folderPath)) return null;
-            var files = Directory.GetFiles(folderPath)
-                .Where(f => imageExtensions.Contains(Path.GetExtension(f).ToLower()))
-                .OrderBy(f => f)
-                .ToArray();
-            return files.Length > 0 ? files[0] : null;
+            return GetImageFiles(folderPath).FirstOrDefault();
         }
 
         private string GetBaseName(string filePath)
@@ -579,97 +807,595 @@ namespace WindowsFormsApp1
             return file;
         }
 
-        private void BtnMerge_Click(object sender, EventArgs e)
+        private string GetOutputExtension(string format)
+        {
+            switch ((format ?? string.Empty).Trim().ToUpperInvariant())
+            {
+                case "JPEG":
+                case "JPG":
+                    return ".jpg";
+                case "PNG":
+                    return ".png";
+                case "PSD":
+                    return ".psd";
+                default:
+                    return ".tif";
+            }
+        }
+
+        private BuildJobsResult BuildJobs()
         {
             if (string.IsNullOrEmpty(txtTemplateFolder.Text) || !Directory.Exists(txtTemplateFolder.Text))
             {
                 MessageBox.Show("请选择有效的模版文件夹", "提示", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                return;
+                return null;
             }
             if (string.IsNullOrEmpty(txtMaterialFolder.Text) || !Directory.Exists(txtMaterialFolder.Text))
             {
                 MessageBox.Show("请选择有效的素材文件夹", "提示", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                return;
+                return null;
             }
             if (string.IsNullOrEmpty(txtSavePath.Text) || !Directory.Exists(txtSavePath.Text))
             {
                 MessageBox.Show("请选择有效的保存路径", "提示", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return null;
+            }
+
+            string format = cmbFormat.SelectedItem?.ToString() ?? "TIF";
+            if (string.Equals(format, "PSD", StringComparison.OrdinalIgnoreCase))
+            {
+                MessageBox.Show("当前版本暂不支持真实 PSD 导出，请改用 TIF、PNG 或 JPEG。", "提示", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return null;
+            }
+
+            bool isBatchMode = chkBatchMode.Checked;
+            List<string> templateFiles = GetImageFiles(txtTemplateFolder.Text);
+            List<string> materialFiles = GetImageFiles(txtMaterialFolder.Text);
+
+            if (templateFiles.Count == 0)
+            {
+                MessageBox.Show("模版文件夹未找到图片文件", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return null;
+            }
+            if (materialFiles.Count == 0)
+            {
+                MessageBox.Show("素材文件夹未找到图片文件", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return null;
+            }
+            if (isBatchMode && templateFiles.Count != 1)
+            {
+                MessageBox.Show("批量套图当前只支持单模版目录，请保证模版文件夹中只有一张图片。", "提示", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return null;
+            }
+
+            string templateFile = templateFiles[0];
+            if (!isBatchMode)
+            {
+                materialFiles = new List<string> { materialFiles[0] };
+            }
+
+            string separator = string.IsNullOrWhiteSpace(txtSeparator.Text) ? "-" : txtSeparator.Text;
+            TemplateCompositeMode compositeMode = cmbCompositeMode.SelectedIndex == 1
+                ? TemplateCompositeMode.FullBleed
+                : TemplateCompositeMode.Standard;
+            string compositeModeName = cmbCompositeMode.SelectedItem?.ToString() ?? "套图标准模式";
+            string exclusionMaskPath = compositeMode == TemplateCompositeMode.FullBleed
+                ? @"D:\matrials\3-save\mask.png"
+                : null;
+            string ext = GetOutputExtension(format);
+
+            var jobs = new List<MergeJobItem>();
+            int index = 1;
+            foreach (string materialFile in materialFiles)
+            {
+                string baseName = GetBaseName(templateFile) + separator + GetBaseName(materialFile);
+                string outputFile = NextOutputFile(txtSavePath.Text, baseName, ext);
+                jobs.Add(new MergeJobItem
+                {
+                    Index = index++,
+                    TemplatePath = templateFile,
+                    MaterialPath = materialFile,
+                    OutputPath = outputFile,
+                    Status = MergeJobStatus.Pending,
+                    Message = "等待处理"
+                });
+            }
+
+            return new BuildJobsResult
+            {
+                IsBatchMode = isBatchMode,
+                TemplateFile = templateFile,
+                Jobs = jobs,
+                Format = format,
+                CompositeMode = compositeMode,
+                CompositeModeName = compositeModeName,
+                ExclusionMaskPath = exclusionMaskPath
+            };
+        }
+
+        private void ResetDialogResultState()
+        {
+            ResultPath = null;
+            ResultPaths = Array.Empty<string>();
+            canReturnResults = false;
+            this.DialogResult = DialogResult.None;
+        }
+
+        private void InitializeBatchDisplay(List<MergeJobItem> jobs)
+        {
+            lvResults.BeginUpdate();
+            try
+            {
+                lvResults.Items.Clear();
+                foreach (MergeJobItem job in jobs)
+                {
+                    var item = new ListViewItem(job.Index.ToString());
+                    item.SubItems.Add(Path.GetFileName(job.MaterialPath));
+                    item.SubItems.Add(GetStatusText(job.Status));
+                    item.SubItems.Add(Path.GetFileName(job.OutputPath));
+                    item.SubItems.Add(job.Message ?? string.Empty);
+                    item.Tag = job;
+                    job.ListItem = item;
+                    lvResults.Items.Add(item);
+                }
+            }
+            finally
+            {
+                lvResults.EndUpdate();
+            }
+
+            prgBatch.Maximum = Math.Max(1, jobs.Count);
+            prgBatch.Value = 0;
+            lblBatchSummary.Text = jobs.Count == 0 ? "没有待处理任务" : $"共 {jobs.Count} 个任务，等待开始";
+        }
+
+        private void UpdateJobStatus(MergeJobItem job, MergeJobStatus status, string message)
+        {
+            job.Status = status;
+            job.Message = message;
+
+            if (job.ListItem != null)
+            {
+                job.ListItem.SubItems[2].Text = GetStatusText(status);
+                job.ListItem.SubItems[4].Text = message ?? string.Empty;
+            }
+        }
+
+        private string GetStatusText(MergeJobStatus status)
+        {
+            switch (status)
+            {
+                case MergeJobStatus.Validating:
+                    return "预检中";
+                case MergeJobStatus.Running:
+                    return "处理中";
+                case MergeJobStatus.Completed:
+                    return "成功";
+                case MergeJobStatus.Failed:
+                    return "失败";
+                case MergeJobStatus.Canceled:
+                    return "已取消";
+                case MergeJobStatus.Skipped:
+                    return "已跳过";
+                default:
+                    return "等待中";
+            }
+        }
+
+        private void UpdateBatchSummary()
+        {
+            if (batchState == null)
                 return;
+
+            int total = batchState.Jobs.Count;
+            int completed = batchState.Jobs.Count(j => j.Status == MergeJobStatus.Completed);
+            int failed = batchState.Jobs.Count(j => j.Status == MergeJobStatus.Failed);
+            int skipped = batchState.Jobs.Count(j => j.Status == MergeJobStatus.Skipped);
+            int canceled = batchState.Jobs.Count(j => j.Status == MergeJobStatus.Canceled);
+            int finished = batchState.Jobs.Count(j =>
+                j.Status == MergeJobStatus.Completed ||
+                j.Status == MergeJobStatus.Failed ||
+                j.Status == MergeJobStatus.Skipped ||
+                j.Status == MergeJobStatus.Canceled);
+
+            prgBatch.Value = Math.Min(prgBatch.Maximum, Math.Max(0, finished));
+
+            MergeJobItem runningJob = batchState.Jobs.FirstOrDefault(j => j.Status == MergeJobStatus.Running || j.Status == MergeJobStatus.Validating);
+            string runningText = runningJob != null ? $"，当前: {Path.GetFileName(runningJob.MaterialPath)}" : string.Empty;
+            lblBatchSummary.Text = $"已完成 {completed}/{total}，失败 {failed}，跳过 {skipped}，取消 {canceled}{runningText}";
+        }
+
+        private void SetBusyState(bool busy)
+        {
+            isRunning = busy;
+
+            txtTemplateFolder.Enabled = !busy;
+            txtMaterialFolder.Enabled = !busy;
+            txtSavePath.Enabled = !busy;
+            txtSeparator.Enabled = !busy;
+            cmbFormat.Enabled = !busy;
+            cmbCompositeMode.Enabled = !busy;
+            chkWhiteInk.Enabled = !busy;
+            chkVarnish.Enabled = !busy;
+            chkBatchMode.Enabled = !busy;
+            btnBrowseTemplate.Enabled = !busy;
+            btnBrowseMaterial.Enabled = !busy;
+            btnBrowseSave.Enabled = !busy;
+            btnClose.Enabled = !busy;
+            btnMerge.Enabled = !busy;
+            btnPauseResume.Enabled = busy && chkBatchMode.Checked;
+            btnCancel.Enabled = busy && chkBatchMode.Checked;
+            btnPauseResume.Text = "暂停";
+
+            if (busy)
+            {
+                btnMerge.Text = "处理中...";
+            }
+            else
+            {
+                btnMerge.Text = chkBatchMode.Checked ? "开始批量套图" : "开始套图";
+            }
+        }
+
+        private ValidationResult ValidateImage(string imagePath)
+        {
+            if (string.IsNullOrWhiteSpace(imagePath) || !File.Exists(imagePath))
+            {
+                return new ValidationResult
+                {
+                    IsValid = false,
+                    ErrorMessage = "文件不存在"
+                };
             }
 
             try
             {
-                btnMerge.Enabled = false;
-                btnMerge.Text = "处理中...";
-                lblStatus.Text = "正在查找图片...";
-                Application.DoEvents();
-
-                string templateFile = FindFirstImage(txtTemplateFolder.Text);
-                string materialFile = FindFirstImage(txtMaterialFolder.Text);
-
-                if (templateFile == null)
+                using (var preview = AsposePSDHelper.GeneratePreview(imagePath))
                 {
-                    MessageBox.Show("模版文件夹未找到图片文件", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                    return;
-                }
-                if (materialFile == null)
-                {
-                    MessageBox.Show("素材文件夹未找到图片文件", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                    return;
+                    if (preview == null)
+                    {
+                        return new ValidationResult
+                        {
+                            IsValid = false,
+                            ErrorMessage = "无法读取或格式不兼容"
+                        };
+                    }
                 }
 
-                string separator = txtSeparator.Text;
-                if (string.IsNullOrEmpty(separator)) separator = "-";
-                string format = cmbFormat.SelectedItem?.ToString() ?? "TIF";
-                TemplateCompositeMode compositeMode = cmbCompositeMode.SelectedIndex == 1
-                    ? TemplateCompositeMode.FullBleed
-                    : TemplateCompositeMode.Standard;
-                string compositeModeName = cmbCompositeMode.SelectedItem?.ToString() ?? "套图标准模式";
-                string exclusionMaskPath = compositeMode == TemplateCompositeMode.FullBleed
-                    ? @"D:\matrials\3-save\mask.png"
-                    : null;
-                string ext = format.ToLower() == "jpeg" || format.ToLower() == "jpg" ? ".jpg" :
-                             format.ToLower() == "png" ? ".png" :
-                             format.ToLower() == "psd" ? ".psd" : ".tif";
-
-                string baseName = GetBaseName(templateFile) + separator + GetBaseName(materialFile);
-                string outputFile = NextOutputFile(txtSavePath.Text, baseName, ext);
-
-                Console.WriteLine($"模版路径名称：{templateFile}");
-                Console.WriteLine($"素材路径名称：{materialFile}");
-                Console.WriteLine($"套图模式：{compositeModeName}");
-
-                AsposePSDHelper.ProcessTifMode(
-                    templateFile,
-                    materialFile,
-                    outputFile,
-                    format,
-                    msg => { lblStatus.Text = msg; Application.DoEvents(); },
-                    chkWhiteInk.Checked ? "White" : null,
-                    chkVarnish.Checked ? "Varnish" : null,
-                    0,
-                    0,
-                    compositeMode,
-                    exclusionMaskPath);
-
-                ResultPath = outputFile;
-                lblStatus.Text = "完成！";
-                Console.WriteLine($"输出路径名称：{outputFile}");
-                MessageBox.Show($"{compositeModeName}完成！\n保存路径: {outputFile}", "成功", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return new ValidationResult
+                {
+                    IsValid = true,
+                    ErrorMessage = null
+                };
             }
             catch (Exception ex)
             {
-                lblStatus.Text = "处理失败";
-                MessageBox.Show($"套图失败: {ex.Message}\n{ex.StackTrace}", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return new ValidationResult
+                {
+                    IsValid = false,
+                    ErrorMessage = ex.Message
+                };
+            }
+        }
+
+        private void RunControlCheckpoint()
+        {
+            if (batchState == null)
+                return;
+
+            batchState.PauseGate.Wait(batchState.CancellationSource.Token);
+            batchState.CancellationSource.Token.ThrowIfCancellationRequested();
+        }
+
+        private void InvokeOnUi(Action action)
+        {
+            if (IsDisposed || Disposing || action == null)
+                return;
+
+            if (InvokeRequired)
+            {
+                BeginInvoke(action);
+            }
+            else
+            {
+                action();
+            }
+        }
+
+        private void ReportProgress(MergeJobItem job, string message)
+        {
+            InvokeOnUi(() =>
+            {
+                lblStatus.Text = message;
+                if (chkBatchMode.Checked && job != null)
+                {
+                    UpdateJobStatus(job, MergeJobStatus.Running, message);
+                    UpdateBatchSummary();
+                }
+            });
+        }
+
+        private async Task<List<MergeJobItem>> PrevalidateJobsAsync(BuildJobsResult buildResult)
+        {
+            var validJobs = new List<MergeJobItem>();
+            var invalidMessages = new List<string>();
+
+            lblStatus.Text = "正在预检模版...";
+            var templateValidation = await Task.Run(() => ValidateImage(buildResult.TemplateFile));
+            if (!templateValidation.IsValid)
+            {
+                MessageBox.Show($"模版预检失败: {templateValidation.ErrorMessage}", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return null;
+            }
+
+            foreach (MergeJobItem job in buildResult.Jobs)
+            {
+                if (buildResult.IsBatchMode)
+                {
+                    UpdateJobStatus(job, MergeJobStatus.Validating, "预检中...");
+                    UpdateBatchSummary();
+                }
+
+                lblStatus.Text = $"正在预检素材: {Path.GetFileName(job.MaterialPath)}";
+                ValidationResult validation = await Task.Run(() => ValidateImage(job.MaterialPath));
+                if (validation.IsValid)
+                {
+                    validJobs.Add(job);
+                    if (buildResult.IsBatchMode)
+                    {
+                        UpdateJobStatus(job, MergeJobStatus.Pending, "等待处理");
+                        UpdateBatchSummary();
+                    }
+                }
+                else
+                {
+                    string message = validation.ErrorMessage ?? "无法读取或格式不兼容";
+                    invalidMessages.Add($"{Path.GetFileName(job.MaterialPath)}: {message}");
+                    if (buildResult.IsBatchMode)
+                    {
+                        UpdateJobStatus(job, MergeJobStatus.Skipped, message);
+                        UpdateBatchSummary();
+                    }
+                }
+            }
+
+            if (invalidMessages.Count > 0)
+            {
+                MessageBox.Show(
+                    "以下素材预检失败，将自动跳过：\n" + string.Join("\n", invalidMessages),
+                    "预检提示",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Warning);
+            }
+
+            return validJobs;
+        }
+
+        private void MarkPendingJobsAsCanceled(List<MergeJobItem> jobs)
+        {
+            foreach (MergeJobItem job in jobs)
+            {
+                if (job.Status == MergeJobStatus.Pending || job.Status == MergeJobStatus.Validating || job.Status == MergeJobStatus.Running)
+                {
+                    UpdateJobStatus(job, MergeJobStatus.Canceled, "已取消");
+                }
+            }
+
+            if (chkBatchMode.Checked)
+            {
+                UpdateBatchSummary();
+            }
+        }
+
+        private async Task ExecuteJobsAsync(BuildJobsResult buildResult)
+        {
+            batchState = new BatchRunState(buildResult.Jobs);
+            SetBusyState(true);
+
+            try
+            {
+                if (buildResult.IsBatchMode)
+                {
+                    InitializeBatchDisplay(buildResult.Jobs);
+                }
+
+                List<MergeJobItem> validJobs = await PrevalidateJobsAsync(buildResult);
+                if (validJobs == null)
+                {
+                    lblStatus.Text = "预检失败";
+                    return;
+                }
+
+                if (validJobs.Count == 0)
+                {
+                    lblStatus.Text = "没有可处理的素材";
+                    if (buildResult.IsBatchMode)
+                    {
+                        UpdateBatchSummary();
+                    }
+                    return;
+                }
+
+                foreach (MergeJobItem job in validJobs)
+                {
+                    try
+                    {
+                        RunControlCheckpoint();
+
+                        Console.WriteLine($"模版路径名称：{job.TemplatePath}");
+                        Console.WriteLine($"素材路径名称：{job.MaterialPath}");
+                        Console.WriteLine($"套图模式：{buildResult.CompositeModeName}");
+
+                        UpdateJobStatus(job, MergeJobStatus.Running, "准备处理...");
+                        if (buildResult.IsBatchMode)
+                        {
+                            UpdateBatchSummary();
+                        }
+
+                        await Task.Run(() =>
+                        {
+                            AsposePSDHelper.ProcessTifMode(
+                                job.TemplatePath,
+                                job.MaterialPath,
+                                job.OutputPath,
+                                buildResult.Format,
+                                msg => ReportProgress(job, msg),
+                                chkWhiteInk.Checked ? "White" : null,
+                                chkVarnish.Checked ? "Varnish" : null,
+                                0,
+                                0,
+                                buildResult.CompositeMode,
+                                buildResult.ExclusionMaskPath,
+                                RunControlCheckpoint);
+                        }, batchState.CancellationSource.Token);
+
+                        batchState.SuccessOutputPaths.Add(job.OutputPath);
+                        UpdateJobStatus(job, MergeJobStatus.Completed, "处理完成");
+                        lblStatus.Text = $"已完成: {Path.GetFileName(job.MaterialPath)}";
+                        Console.WriteLine($"输出路径名称：{job.OutputPath}");
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        UpdateJobStatus(job, MergeJobStatus.Canceled, "已取消");
+                        MarkPendingJobsAsCanceled(validJobs);
+                        lblStatus.Text = "已取消";
+                        break;
+                    }
+                    catch (Exception ex)
+                    {
+                        UpdateJobStatus(job, MergeJobStatus.Failed, ex.Message);
+                        lblStatus.Text = $"处理失败: {Path.GetFileName(job.MaterialPath)}";
+                    }
+                    finally
+                    {
+                        if (buildResult.IsBatchMode)
+                        {
+                            UpdateBatchSummary();
+                        }
+                    }
+                }
+
+                ResultPaths = batchState.SuccessOutputPaths.ToArray();
+                ResultPath = ResultPaths.Count > 0 ? ResultPaths[0] : null;
+                canReturnResults = ResultPaths.Count > 0;
+
+                int successCount = buildResult.Jobs.Count(j => j.Status == MergeJobStatus.Completed);
+                int failedCount = buildResult.Jobs.Count(j => j.Status == MergeJobStatus.Failed);
+                int skippedCount = buildResult.Jobs.Count(j => j.Status == MergeJobStatus.Skipped);
+                int canceledCount = buildResult.Jobs.Count(j => j.Status == MergeJobStatus.Canceled);
+
+                if (!buildResult.IsBatchMode)
+                {
+                    if (successCount > 0)
+                    {
+                        lblStatus.Text = "完成！";
+                        MessageBox.Show($"{buildResult.CompositeModeName}完成！\n保存路径: {ResultPath}", "成功", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                        this.DialogResult = DialogResult.OK;
+                        Close();
+                    }
+                    else if (canceledCount > 0)
+                    {
+                        MessageBox.Show("任务已取消。", "提示", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    }
+                    else
+                    {
+                        MessageBox.Show("套图失败，请检查输入素材或结果消息。", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    }
+                }
+                else
+                {
+                    string summary = $"批量套图完成：成功 {successCount}，失败 {failedCount}，跳过 {skippedCount}，取消 {canceledCount}";
+                    lblStatus.Text = summary;
+                    UpdateBatchSummary();
+                    MessageBox.Show(
+                        canReturnResults
+                            ? summary + "\n关闭窗口后将把成功结果载入画布。"
+                            : summary,
+                        "批量套图",
+                        MessageBoxButtons.OK,
+                        canReturnResults ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
+                }
             }
             finally
             {
-                btnMerge.Enabled = true;
-                btnMerge.Text = "开始套图";
+                batchState?.PauseGate.Set();
+                batchState?.Dispose();
+                batchState = null;
+                SetBusyState(false);
             }
         }
+
+        private async void BtnMerge_Click(object sender, EventArgs e)
+        {
+            if (isRunning)
+            {
+                return;
+            }
+
+            ResetDialogResultState();
+            BuildJobsResult buildResult = BuildJobs();
+            if (buildResult == null)
+            {
+                return;
+            }
+
+            await ExecuteJobsAsync(buildResult);
+        }
+
+        private void BtnPauseResume_Click(object sender, EventArgs e)
+        {
+            if (!isRunning || batchState == null)
+            {
+                return;
+            }
+
+            if (batchState.IsPaused)
+            {
+                batchState.IsPaused = false;
+                batchState.PauseGate.Set();
+                btnPauseResume.Text = "暂停";
+                lblStatus.Text = "继续执行...";
+            }
+            else
+            {
+                batchState.IsPaused = true;
+                batchState.PauseGate.Reset();
+                btnPauseResume.Text = "继续";
+                lblStatus.Text = "已暂停，等待继续";
+            }
+        }
+
+        private void BtnCancel_Click(object sender, EventArgs e)
+        {
+            if (!isRunning || batchState == null)
+            {
+                return;
+            }
+
+            btnCancel.Enabled = false;
+            lblStatus.Text = "正在取消...";
+            batchState.PauseGate.Set();
+            batchState.CancellationSource.Cancel();
+        }
+
+        private void BtnClose_Click(object sender, EventArgs e)
+        {
+            if (isRunning)
+            {
+                MessageBox.Show("当前任务正在执行，请先取消任务后再关闭窗口。", "提示", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            if (canReturnResults)
+            {
+                this.DialogResult = DialogResult.OK;
+            }
+
+            Close();
+        }
     }
-        public class GuideLine
+
+    public class GuideLine
     {
         public bool IsHorizontal { get; set; }
         public float Position { get; set; }
