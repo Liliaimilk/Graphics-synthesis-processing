@@ -6,14 +6,76 @@ using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.IO;
 using System.Linq;
+using System.Net.WebSockets;
+using System.Runtime.Serialization;
+using System.Runtime.Serialization.Json;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 
 namespace WindowsFormsApp1
 {
+    [DataContract]
+    public sealed class RemoteMergeMessage
+    {
+        [DataMember(Name = "materialName")]
+        public string MaterialName { get; set; }
+
+        [DataMember(Name = "materialNames")]
+        public string[] MaterialNames { get; set; }
+
+        [DataMember(Name = "templateName")]
+        public string TemplateName { get; set; }
+
+        [DataMember(Name = "format")]
+        public string Format { get; set; }
+
+        [DataMember(Name = "compositeMode")]
+        public string CompositeMode { get; set; }
+
+        [DataMember(Name = "whiteInk")]
+        public bool? WhiteInk { get; set; }
+
+        [DataMember(Name = "varnish")]
+        public bool? Varnish { get; set; }
+
+        [DataMember(Name = "separator")]
+        public string Separator { get; set; }
+    }
+
+    public sealed class RemoteMergeRequest
+    {
+        public string TemplateFolder { get; set; }
+        public string MaterialFolder { get; set; }
+        public string SavePath { get; set; }
+        public List<string> MaterialNames { get; set; } = new List<string>();
+        public string TemplateName { get; set; }
+        public string Format { get; set; }
+        public string CompositeMode { get; set; }
+        public bool? WhiteInk { get; set; }
+        public bool? Varnish { get; set; }
+        public string Separator { get; set; }
+        public string RawJson { get; set; }
+
+        public string DisplayName
+        {
+            get
+            {
+                if (MaterialNames == null || MaterialNames.Count == 0)
+                {
+                    return "未命名请求";
+                }
+
+                return string.Join(", ", MaterialNames);
+            }
+        }
+    }
+
     public partial class Form1 : Form
     {
+        private const string RemoteWebSocketEndpoint = "ws://192.168.0.222:8080/websocket/2";
+
         private RulerCanvas canvas;
         private Panel workspacePanel;
         private Panel leftToolPanel;
@@ -27,6 +89,12 @@ namespace WindowsFormsApp1
         private Label zoomLabel;
         private Button resetZoomButton;
         private CanvasTool currentTool = CanvasTool.Move;
+        private readonly Queue<RemoteMergeRequest> remoteMergeQueue = new Queue<RemoteMergeRequest>();
+        private ClientWebSocket remoteWebSocketClient;
+        private CancellationTokenSource remoteWebSocketCts;
+        private Task remoteWebSocketReceiveTask;
+        private bool isProcessingRemoteQueue;
+        private MergeDialog activeRemoteDialog;
 
         public Form1()
         {
@@ -35,6 +103,8 @@ namespace WindowsFormsApp1
             SetupToolbar();
             SetupStatusBar();
             SetupDragDrop();
+            this.Shown += Form1_Shown;
+            this.FormClosing += Form1_FormClosing;
         }
 
         private void SetupDragDrop()
@@ -219,6 +289,336 @@ namespace WindowsFormsApp1
             canvas.ZoomChanged += (zoom) => lblZoom.Text = $"{Math.Round(zoom * 100)}%";
         }
 
+        private async void Form1_Shown(object sender, EventArgs e)
+        {
+            await StartRemoteWebSocketServerAsync();
+        }
+
+        private void Form1_FormClosing(object sender, FormClosingEventArgs e)
+        {
+            StopRemoteWebSocketServer();
+            activeRemoteDialog?.Close();
+        }
+
+        private async Task StartRemoteWebSocketServerAsync()
+        {
+            if (remoteWebSocketReceiveTask != null && !remoteWebSocketReceiveTask.IsCompleted)
+            {
+                return;
+            }
+
+            try
+            {
+                remoteWebSocketCts?.Dispose();
+                remoteWebSocketCts = new CancellationTokenSource();
+                remoteWebSocketReceiveTask = Task.Run(() => RunRemoteWebSocketClientLoopAsync(remoteWebSocketCts.Token));
+                lblStatus.Text = "正在连接远程WebSocket...";
+            }
+            catch (Exception ex)
+            {
+                lblStatus.Text = "WebSocket启动失败";
+                MessageBox.Show($"无法启动 WebSocket 客户端: {ex.Message}", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                StopRemoteWebSocketServer();
+            }
+
+            await Task.CompletedTask;
+        }
+
+        private void StopRemoteWebSocketServer()
+        {
+            try
+            {
+                remoteWebSocketCts?.Cancel();
+            }
+            catch { }
+
+            try
+            {
+                if (remoteWebSocketClient != null)
+                {
+                    if (remoteWebSocketClient.State == WebSocketState.Open || remoteWebSocketClient.State == WebSocketState.CloseReceived)
+                    {
+                        remoteWebSocketClient.CloseAsync(WebSocketCloseStatus.NormalClosure, "closing", CancellationToken.None).GetAwaiter().GetResult();
+                    }
+
+                    remoteWebSocketClient.Dispose();
+                }
+            }
+            catch { }
+
+            remoteWebSocketClient = null;
+            remoteWebSocketReceiveTask = null;
+            remoteWebSocketCts?.Dispose();
+            remoteWebSocketCts = null;
+        }
+
+        private async Task RunRemoteWebSocketClientLoopAsync(CancellationToken cancellationToken)
+        {
+            while (!cancellationToken.IsCancellationRequested)
+            {
+                ClientWebSocket client = null;
+                try
+                {
+                    client = new ClientWebSocket();
+                    remoteWebSocketClient = client;
+                    SafeUpdateStatus($"正在连接: {RemoteWebSocketEndpoint}");
+                    await client.ConnectAsync(new Uri(RemoteWebSocketEndpoint), cancellationToken);
+                    SafeUpdateStatus("远程WebSocket已连接");
+                    await ReceiveRemoteMessagesAsync(client, cancellationToken);
+                }
+                catch (OperationCanceledException)
+                {
+                    break;
+                }
+                catch (WebSocketException ex)
+                {
+                    SafeUpdateStatus($"WebSocket连接失败，稍后重试: {ex.Message}");
+                }
+                catch (Exception ex)
+                {
+                    SafeUpdateStatus($"WebSocket运行异常，稍后重试: {ex.Message}");
+                }
+                finally
+                {
+                    if (remoteWebSocketClient == client)
+                    {
+                        remoteWebSocketClient = null;
+                    }
+
+                    try
+                    {
+                        client?.Dispose();
+                    }
+                    catch { }
+                }
+
+                if (cancellationToken.IsCancellationRequested)
+                {
+                    break;
+                }
+
+                try
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(5), cancellationToken);
+                }
+                catch (OperationCanceledException)
+                {
+                    break;
+                }
+            }
+        }
+
+        private async Task ReceiveRemoteMessagesAsync(WebSocket webSocket, CancellationToken cancellationToken)
+        {
+            var buffer = new byte[8192];
+            var builder = new StringBuilder();
+
+            while (webSocket != null && webSocket.State == WebSocketState.Open && !cancellationToken.IsCancellationRequested)
+            {
+                builder.Clear();
+                WebSocketReceiveResult result;
+                do
+                {
+                    result = await webSocket.ReceiveAsync(new ArraySegment<byte>(buffer), cancellationToken);
+                    if (result.MessageType == WebSocketMessageType.Close)
+                    {
+                        if (webSocket.State == WebSocketState.Open || webSocket.State == WebSocketState.CloseReceived)
+                        {
+                            await webSocket.CloseAsync(WebSocketCloseStatus.NormalClosure, "closing", CancellationToken.None);
+                        }
+                        return;
+                    }
+
+                    if (result.MessageType != WebSocketMessageType.Text)
+                    {
+                        continue;
+                    }
+
+                    builder.Append(Encoding.UTF8.GetString(buffer, 0, result.Count));
+                }
+                while (!result.EndOfMessage);
+
+                if (builder.Length == 0)
+                {
+                    continue;
+                }
+
+                try
+                {
+                    RemoteMergeRequest request = CreateRemoteMergeRequest(builder.ToString());
+                    Console.WriteLine($"result:{request.ToString()}" );
+
+                    BeginInvoke(new Action(() => EnqueueRemoteMergeRequest(request)));
+                }
+                catch (Exception ex)
+                {
+                    SafeUpdateStatus($"远程消息解析失败: {ex.Message}");
+                }
+            }
+        }
+
+        private RemoteMergeRequest CreateRemoteMergeRequest(string rawJson)
+        {
+            RemoteMergeMessage message = DeserializeRemoteMergeMessage(rawJson);
+            var settings = Properties.Settings.Default;
+            List<string> materialNames = new List<string>();
+
+            if (!string.IsNullOrWhiteSpace(message?.MaterialName))
+            {
+                materialNames.Add(message.MaterialName.Trim());
+            }
+
+            if (message?.MaterialNames != null)
+            {
+                materialNames.AddRange(message.MaterialNames
+                    .Where(name => !string.IsNullOrWhiteSpace(name))
+                    .Select(name => name.Trim()));
+            }
+
+            materialNames = materialNames
+                .Where(name => !string.IsNullOrWhiteSpace(name))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            if (materialNames.Count == 0)
+            {
+                throw new InvalidOperationException("消息中未提供素材名");
+            }
+
+            return new RemoteMergeRequest
+            {
+                TemplateFolder = settings.TemplateFolder,
+                MaterialFolder = settings.MaterialFolder,
+                SavePath = settings.SavePath,
+                MaterialNames = materialNames,
+                TemplateName = message?.TemplateName,
+                Format = message?.Format,
+                CompositeMode = message?.CompositeMode,
+                WhiteInk = message?.WhiteInk,
+                Varnish = message?.Varnish,
+                Separator = message?.Separator,
+                RawJson = rawJson
+            };
+        }
+
+        private RemoteMergeMessage DeserializeRemoteMergeMessage(string rawJson)
+        {
+            if (string.IsNullOrWhiteSpace(rawJson))
+            {
+                throw new InvalidOperationException("消息内容为空");
+            }
+
+            var serializer = new DataContractJsonSerializer(typeof(RemoteMergeMessage));
+            using (var stream = new MemoryStream(Encoding.UTF8.GetBytes(rawJson)))
+            {
+                return serializer.ReadObject(stream) as RemoteMergeMessage;
+            }
+        }
+
+        private void EnqueueRemoteMergeRequest(RemoteMergeRequest request)
+        {
+            if (request == null)
+            {
+                return;
+            }
+
+            remoteMergeQueue.Enqueue(request);
+            lblStatus.Text = $"远程请求排队: {request.DisplayName}";
+
+            if (!isProcessingRemoteQueue)
+            {
+                _ = ProcessRemoteMergeQueueAsync();
+            }
+        }
+
+        private async Task ProcessRemoteMergeQueueAsync()
+        {
+            if (isProcessingRemoteQueue)
+            {
+                return;
+            }
+
+            isProcessingRemoteQueue = true;
+            try
+            {
+                while (remoteMergeQueue.Count > 0 && !IsDisposed)
+                {
+                    RemoteMergeRequest request = remoteMergeQueue.Dequeue();
+                    lblStatus.Text = $"处理远程请求: {request.DisplayName}";
+
+                    if (activeRemoteDialog == null || activeRemoteDialog.IsDisposed)
+                    {
+                        Console.WriteLine($"{nameof(activeRemoteDialog)} is null or disposed, creating a new instance.");
+                        activeRemoteDialog = new MergeDialog();
+                        activeRemoteDialog.Owner = this;
+                    }
+
+                    try
+                    {
+                        Console.WriteLine($"Applying remote request: {request.DisplayName}");
+                        activeRemoteDialog.ApplyRemoteRequest(request);
+                        if (!activeRemoteDialog.Visible)
+                        {
+                            Console.WriteLine("Showing active remote dialog.");
+                            activeRemoteDialog.Show(this);
+                        }
+
+                        activeRemoteDialog.BringToFront();
+                        Console.WriteLine("Starting remote run...");
+                        bool completed = await activeRemoteDialog.StartRemoteRunAsync();
+                        Console.WriteLine($"Remote run completed: {completed}");
+                        if (!completed)
+                        {
+                            lblStatus.Text = $"远程请求失败: {activeRemoteDialog.GetStatusTextSnapshot()}";
+                        }
+                        if (completed)
+                        {
+                            if (activeRemoteDialog.ResultPaths != null && activeRemoteDialog.ResultPaths.Count > 1)
+                            {
+                                LoadResultsToCanvas(activeRemoteDialog.ResultPaths);
+                            }
+                            else if (!string.IsNullOrEmpty(activeRemoteDialog.ResultPath))
+                            {
+                                LoadResultToCanvas(activeRemoteDialog.ResultPath);
+                            }
+                        }
+                    }
+                    finally
+                    {
+                        if (activeRemoteDialog != null && !activeRemoteDialog.IsDisposed && activeRemoteDialog.Visible)
+                        {
+                            //activeRemoteDialog.Hide();
+                        }
+                    }
+                }
+            }
+            finally
+            {
+                isProcessingRemoteQueue = false;
+                if (activeRemoteDialog != null && !activeRemoteDialog.IsDisposed)
+                {
+                    activeRemoteDialog.Dispose();
+                    activeRemoteDialog = null;
+                }
+            }
+        }
+
+        private void SafeUpdateStatus(string message)
+        {
+            if (IsDisposed || Disposing)
+            {
+                return;
+            }
+
+            if (InvokeRequired)
+            {
+                BeginInvoke(new Action<string>(SafeUpdateStatus), message);
+                return;
+            }
+
+            lblStatus.Text = message;
+        }
+
         private void BtnMergeTool_Click(object sender, EventArgs e)
         {
             using (var dialog = new MergeDialog())
@@ -333,7 +733,9 @@ namespace WindowsFormsApp1
 
         private bool isRunning;
         private bool canReturnResults;
+        private bool isRemoteMode;
         private BatchRunState batchState;
+        private RemoteMergeRequest pendingRemoteRequest;
 
         private readonly string[] imageExtensions = { ".psd", ".psb", ".tif", ".tiff", ".jpg", ".jpeg", ".png", ".bmp" };
 
@@ -408,6 +810,286 @@ namespace WindowsFormsApp1
             SetupControls();
             LoadSavedPaths();
             this.FormClosing += MergeDialog_FormClosing;
+        }
+
+        // 获取远程消息后，请求处理
+        public void ApplyRemoteRequest(RemoteMergeRequest request)
+        {
+            pendingRemoteRequest = request;
+            isRemoteMode = request != null;
+            ResetDialogResultState();
+
+            if (request == null)
+            {
+                lblStatus.Text = "远程请求为空";
+                return;
+            }
+            Console.WriteLine($"{request},request");
+            // 文件路径以及选项接收赋值
+
+            txtTemplateFolder.Text = request.TemplateFolder ?? string.Empty;
+            txtMaterialFolder.Text = request.MaterialFolder ?? string.Empty;
+            txtSavePath.Text = request.SavePath ?? string.Empty;
+
+            if (!string.IsNullOrWhiteSpace(request.Separator))
+            {
+                txtSeparator.Text = request.Separator;
+            }
+
+            if (!string.IsNullOrWhiteSpace(request.Format))
+            {
+                SelectFormat(request.Format);
+            }
+
+            if (!string.IsNullOrWhiteSpace(request.CompositeMode))
+            {
+                SelectCompositeMode(request.CompositeMode);
+            }
+
+            if (request.WhiteInk.HasValue)
+            {
+                chkWhiteInk.Checked = request.WhiteInk.Value;
+            }
+
+            if (request.Varnish.HasValue)
+            {
+                chkVarnish.Checked = request.Varnish.Value;
+            }
+
+            chkBatchMode.Checked = request.MaterialNames != null && request.MaterialNames.Count > 1;
+            lblStatus.Text = $"远程请求已加载: {request.DisplayName}";
+        }
+
+        public async Task<bool> StartRemoteRunAsync()
+        {
+            if (isRunning)
+            {
+                lblStatus.Text = "当前任务正在执行";
+                return false;
+            }
+
+            if (pendingRemoteRequest == null)
+            {
+                lblStatus.Text = "没有待执行的远程请求";
+                return false;
+            }
+
+            ResetDialogResultState();
+            BuildJobsResult buildResult = BuildJobsFromRemoteRequest(pendingRemoteRequest);
+            if (buildResult == null)
+            {
+                pendingRemoteRequest = null;
+                return false;
+            }
+
+            await ExecuteJobsAsync(buildResult);
+            pendingRemoteRequest = null;
+            return canReturnResults;
+        }
+
+        public string GetStatusTextSnapshot()
+        {
+            return lblStatus?.Text ?? string.Empty;
+        }
+
+        private void SelectFormat(string format)
+        {
+            string normalized = (format ?? string.Empty).Trim().ToUpperInvariant();
+            for (int i = 0; i < cmbFormat.Items.Count; i++)
+            {
+                string item = cmbFormat.Items[i]?.ToString() ?? string.Empty;
+                if (string.Equals(item, normalized, StringComparison.OrdinalIgnoreCase))
+                {
+                    cmbFormat.SelectedIndex = i;
+                    return;
+                }
+            }
+        }
+
+        private void SelectCompositeMode(string compositeMode)
+        {
+            string normalized = (compositeMode ?? string.Empty).Trim().ToLowerInvariant();
+            bool isFullBleed = normalized.Contains("满版") || normalized.Contains("fullbleed") || normalized.Contains("full_bleed") || normalized.Contains("full-bleed");
+            cmbCompositeMode.SelectedIndex = isFullBleed ? 1 : 0;
+        }
+
+        private void ShowStatusMessage(string statusText, string dialogMessage, string title, MessageBoxIcon icon)
+        {
+            lblStatus.Text = statusText;
+            if (!isRemoteMode)
+            {
+                MessageBox.Show(dialogMessage, title, MessageBoxButtons.OK, icon);
+            }
+        }
+
+        private bool ValidateSelectedFolders()
+        {
+            if (string.IsNullOrEmpty(txtTemplateFolder.Text) || !Directory.Exists(txtTemplateFolder.Text))
+            {
+                ShowStatusMessage("模版目录无效", "请选择有效的模版文件夹", "提示", MessageBoxIcon.Warning);
+                return false;
+            }
+            if (string.IsNullOrEmpty(txtMaterialFolder.Text) || !Directory.Exists(txtMaterialFolder.Text))
+            {
+                ShowStatusMessage("素材目录无效", "请选择有效的素材文件夹", "提示", MessageBoxIcon.Warning);
+                return false;
+            }
+            if (string.IsNullOrEmpty(txtSavePath.Text) || !Directory.Exists(txtSavePath.Text))
+            {
+                ShowStatusMessage("保存目录无效", "请选择有效的保存路径", "提示", MessageBoxIcon.Warning);
+                return false;
+            }
+
+            return true;
+        }
+
+        private BuildJobsResult BuildJobsFromRemoteRequest(RemoteMergeRequest request)
+        {
+            if (!ValidateSelectedFolders())
+            {
+                return null;
+            }
+
+            string format = cmbFormat.SelectedItem?.ToString() ?? "TIF";
+            if (string.Equals(format, "PSD", StringComparison.OrdinalIgnoreCase))
+            {
+                ShowStatusMessage("PSD 导出不支持", "当前版本暂不支持真实 PSD 导出，请改用 TIF、PNG 或 JPEG。", "提示", MessageBoxIcon.Warning);
+                return null;
+            }
+
+            string templateError;
+            string templateFile = ResolveRemoteTemplateFile(request, out templateError);
+            if (templateFile == null)
+            {
+                ShowStatusMessage("远程模版匹配失败,未找到素材", templateError, "错误", MessageBoxIcon.Error);
+                return null;
+            }
+
+            string materialError;
+            Console.WriteLine($"{string.Join(", ", request.MaterialNames ?? new List<string>())}, 材料名称");
+            List<string> materialFiles = ResolveMaterialsByNames(txtMaterialFolder.Text, request.MaterialNames, out materialError);
+            if (materialFiles == null)
+            {
+                ShowStatusMessage("远程素材匹配失败,未找到素材", materialError, "错误", MessageBoxIcon.Error);
+                return null;
+            }
+
+            bool batchMode = materialFiles.Count > 1;
+            chkBatchMode.Checked = batchMode;
+            return BuildJobsCore(templateFile, materialFiles, batchMode, format);
+        }
+
+        private string ResolveRemoteTemplateFile(RemoteMergeRequest request, out string errorMessage)
+        {
+            errorMessage = null;
+            List<string> templateFiles = GetImageFiles(txtTemplateFolder.Text);
+            if (templateFiles.Count == 0)
+            {
+                errorMessage = "模版文件夹未找到图片文件";
+                return null;
+            }
+
+            if (!string.IsNullOrWhiteSpace(request?.TemplateName))
+            {
+                return ResolveSingleFileByBaseName(templateFiles, request.TemplateName, "模版", out errorMessage);
+            }
+
+            if (templateFiles.Count != 1)
+            {
+                errorMessage = "远程模式要求模版文件夹中只有一张图片，或在消息中提供 templateName";
+                return null;
+            }
+
+            return templateFiles[0];
+        }
+
+        private List<string> ResolveMaterialsByNames(string folderPath, IEnumerable<string> materialNames, out string errorMessage)
+        {
+            errorMessage = null;
+            List<string> materialFiles = GetImageFiles(folderPath);
+            if (materialFiles.Count == 0)
+            {
+                errorMessage = "素材文件夹未找到图片文件";
+                return null;
+            }
+
+            var resolvedFiles = new List<string>();
+            foreach (string materialName in materialNames ?? Enumerable.Empty<string>())
+            {
+                string currentError;
+                string matchedFile = ResolveSingleFileByBaseName(materialFiles, materialName, "素材", out currentError);
+                if (matchedFile == null)
+                {
+                    errorMessage = currentError;
+                    return null;
+                }
+
+                resolvedFiles.Add(matchedFile);
+            }
+
+            return resolvedFiles;
+        }
+
+        private string ResolveSingleFileByBaseName(IEnumerable<string> files, string targetName, string fileRole, out string errorMessage)
+        {
+            errorMessage = null;
+            string normalizedName = (targetName ?? string.Empty).Trim();
+            List<string> matches = (files ?? Enumerable.Empty<string>())
+                .Where(path => string.Equals(GetBaseName(path), normalizedName, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+
+            if (matches.Count == 0)
+            {
+                errorMessage = $"未找到同名{fileRole}: {normalizedName}";
+                return null;
+            }
+
+            if (matches.Count > 1)
+            {
+                errorMessage = $"同名{fileRole}存在多个不同扩展文件，无法自动选择: {normalizedName}";
+                return null;
+            }
+
+            return matches[0];
+        }
+
+        private BuildJobsResult BuildJobsCore(string templateFile, List<string> materialFiles, bool isBatchMode, string format)
+        {
+            string separator = string.IsNullOrWhiteSpace(txtSeparator.Text) ? "-" : txtSeparator.Text;
+            TemplateCompositeMode compositeMode = cmbCompositeMode.SelectedIndex == 1
+                ? TemplateCompositeMode.FullBleed
+                : TemplateCompositeMode.Standard;
+            string compositeModeName = cmbCompositeMode.SelectedItem?.ToString() ?? "套图标准模式";
+            string exclusionMaskPath = null;
+            string ext = GetOutputExtension(format);
+
+            var jobs = new List<MergeJobItem>();
+            int index = 1;
+            foreach (string materialFile in materialFiles)
+            {
+                string baseName = GetBaseName(templateFile) + separator + GetBaseName(materialFile);
+                string outputFile = NextOutputFile(txtSavePath.Text, baseName, ext);
+                jobs.Add(new MergeJobItem
+                {
+                    Index = index++,
+                    TemplatePath = templateFile,
+                    MaterialPath = materialFile,
+                    OutputPath = outputFile,
+                    Status = MergeJobStatus.Pending,
+                    Message = "等待处理"
+                });
+            }
+
+            return new BuildJobsResult
+            {
+                IsBatchMode = isBatchMode,
+                TemplateFile = templateFile,
+                Jobs = jobs,
+                Format = format,
+                CompositeMode = compositeMode,
+                CompositeModeName = compositeModeName,
+                ExclusionMaskPath = exclusionMaskPath
+            };
         }
 
         private void SetupDarkTheme()
@@ -644,7 +1326,14 @@ namespace WindowsFormsApp1
             if (isRunning)
             {
                 e.Cancel = true;
-                MessageBox.Show("当前任务正在执行，请先取消任务后再关闭窗口。", "提示", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                if (!isRemoteMode)
+                {
+                    MessageBox.Show("当前任务正在执行，请先取消任务后再关闭窗口。", "提示", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                }
+                else
+                {
+                    lblStatus.Text = "当前远程任务正在执行，请先等待完成或取消";
+                }
                 return;
             }
 
@@ -825,26 +1514,15 @@ namespace WindowsFormsApp1
 
         private BuildJobsResult BuildJobs()
         {
-            if (string.IsNullOrEmpty(txtTemplateFolder.Text) || !Directory.Exists(txtTemplateFolder.Text))
+            if (!ValidateSelectedFolders())
             {
-                MessageBox.Show("请选择有效的模版文件夹", "提示", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                return null;
-            }
-            if (string.IsNullOrEmpty(txtMaterialFolder.Text) || !Directory.Exists(txtMaterialFolder.Text))
-            {
-                MessageBox.Show("请选择有效的素材文件夹", "提示", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                return null;
-            }
-            if (string.IsNullOrEmpty(txtSavePath.Text) || !Directory.Exists(txtSavePath.Text))
-            {
-                MessageBox.Show("请选择有效的保存路径", "提示", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return null;
             }
 
             string format = cmbFormat.SelectedItem?.ToString() ?? "TIF";
             if (string.Equals(format, "PSD", StringComparison.OrdinalIgnoreCase))
             {
-                MessageBox.Show("当前版本暂不支持真实 PSD 导出，请改用 TIF、PNG 或 JPEG。", "提示", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                ShowStatusMessage("PSD 导出不支持", "当前版本暂不支持真实 PSD 导出，请改用 TIF、PNG 或 JPEG。", "提示", MessageBoxIcon.Warning);
                 return null;
             }
 
@@ -854,17 +1532,17 @@ namespace WindowsFormsApp1
 
             if (templateFiles.Count == 0)
             {
-                MessageBox.Show("模版文件夹未找到图片文件", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                ShowStatusMessage("未找到模版图片", "模版文件夹未找到图片文件", "错误", MessageBoxIcon.Error);
                 return null;
             }
             if (materialFiles.Count == 0)
             {
-                MessageBox.Show("素材文件夹未找到图片文件", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                ShowStatusMessage("未找到素材图片", "素材文件夹未找到图片文件", "错误", MessageBoxIcon.Error);
                 return null;
             }
             if (isBatchMode && templateFiles.Count != 1)
             {
-                MessageBox.Show("批量套图当前只支持单模版目录，请保证模版文件夹中只有一张图片。", "提示", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                ShowStatusMessage("批量模式模版数量无效", "批量套图当前只支持单模版目录，请保证模版文件夹中只有一张图片。", "提示", MessageBoxIcon.Warning);
                 return null;
             }
 
@@ -874,44 +1552,10 @@ namespace WindowsFormsApp1
                 materialFiles = new List<string> { materialFiles[0] };
             }
 
-            string separator = string.IsNullOrWhiteSpace(txtSeparator.Text) ? "-" : txtSeparator.Text;
-            TemplateCompositeMode compositeMode = cmbCompositeMode.SelectedIndex == 1
-                ? TemplateCompositeMode.FullBleed
-                : TemplateCompositeMode.Standard;
-            string compositeModeName = cmbCompositeMode.SelectedItem?.ToString() ?? "套图标准模式";
-            string exclusionMaskPath = null; // 暂不支持排除蒙版功能
-            //compositeMode == TemplateCompositeMode.FullBleed? @"D:\matrials\3-save\mask.png": null;
-            string ext = GetOutputExtension(format);
-
-            var jobs = new List<MergeJobItem>();
-            int index = 1;
-            foreach (string materialFile in materialFiles)
-            {
-                string baseName = GetBaseName(templateFile) + separator + GetBaseName(materialFile);
-                string outputFile = NextOutputFile(txtSavePath.Text, baseName, ext);
-                jobs.Add(new MergeJobItem
-                {
-                    Index = index++,
-                    TemplatePath = templateFile,
-                    MaterialPath = materialFile,
-                    OutputPath = outputFile,
-                    Status = MergeJobStatus.Pending,
-                    Message = "等待处理"
-                });
-            }
-
-            return new BuildJobsResult
-            {
-                IsBatchMode = isBatchMode,
-                TemplateFile = templateFile,
-                Jobs = jobs,
-                Format = format,
-                CompositeMode = compositeMode,
-                CompositeModeName = compositeModeName,
-                ExclusionMaskPath = exclusionMaskPath
-            };
+            return BuildJobsCore(templateFile, materialFiles, isBatchMode, format);
         }
 
+        //重置对话框初始值
         private void ResetDialogResultState()
         {
             ResultPath = null;
@@ -1123,7 +1767,11 @@ namespace WindowsFormsApp1
             var templateValidation = await Task.Run(() => ValidateImage(buildResult.TemplateFile));
             if (!templateValidation.IsValid)
             {
-                MessageBox.Show($"模版预检失败: {templateValidation.ErrorMessage}", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                ShowStatusMessage(
+                    "模版预检失败",
+                    $"模版预检失败: {templateValidation.ErrorMessage}",
+                    "错误",
+                    MessageBoxIcon.Error);
                 return null;
             }
 
@@ -1160,10 +1808,10 @@ namespace WindowsFormsApp1
 
             if (invalidMessages.Count > 0)
             {
-                MessageBox.Show(
+                ShowStatusMessage(
+                    $"预检完成，跳过 {invalidMessages.Count} 个素材",
                     "以下素材预检失败，将自动跳过：\n" + string.Join("\n", invalidMessages),
                     "预检提示",
-                    MessageBoxButtons.OK,
                     MessageBoxIcon.Warning);
             }
 
@@ -1288,17 +1936,20 @@ namespace WindowsFormsApp1
                     if (successCount > 0)
                     {
                         lblStatus.Text = "完成！";
-                        MessageBox.Show($"{buildResult.CompositeModeName}完成！\n保存路径: {ResultPath}", "成功", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                        this.DialogResult = DialogResult.OK;
-                        Close();
+                        if (!isRemoteMode)
+                        {
+                            MessageBox.Show($"{buildResult.CompositeModeName}完成！\n保存路径: {ResultPath}", "成功", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                            this.DialogResult = DialogResult.OK;
+                            Close();
+                        }
                     }
                     else if (canceledCount > 0)
                     {
-                        MessageBox.Show("任务已取消。", "提示", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                        ShowStatusMessage("任务已取消", "任务已取消。", "提示", MessageBoxIcon.Warning);
                     }
                     else
                     {
-                        MessageBox.Show("套图失败，请检查输入素材或结果消息。", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                        ShowStatusMessage("套图失败", "套图失败，请检查输入素材或结果消息。", "错误", MessageBoxIcon.Error);
                     }
                 }
                 else
@@ -1306,13 +1957,16 @@ namespace WindowsFormsApp1
                     string summary = $"批量套图完成：成功 {successCount}，失败 {failedCount}，跳过 {skippedCount}，取消 {canceledCount}";
                     lblStatus.Text = summary;
                     UpdateBatchSummary();
-                    MessageBox.Show(
-                        canReturnResults
-                            ? summary + "\n关闭窗口后将把成功结果载入画布。"
-                            : summary,
-                        "批量套图",
-                        MessageBoxButtons.OK,
-                        canReturnResults ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
+                    if (!isRemoteMode)
+                    {
+                        MessageBox.Show(
+                            canReturnResults
+                                ? summary + "\n关闭窗口后将把成功结果载入画布。"
+                                : summary,
+                            "批量套图",
+                            MessageBoxButtons.OK,
+                            canReturnResults ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
+                    }
                 }
             }
             finally
@@ -1381,13 +2035,26 @@ namespace WindowsFormsApp1
         {
             if (isRunning)
             {
-                MessageBox.Show("当前任务正在执行，请先取消任务后再关闭窗口。", "提示", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                if (!isRemoteMode)
+                {
+                    MessageBox.Show("当前任务正在执行，请先取消任务后再关闭窗口。", "提示", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                }
+                else
+                {
+                    lblStatus.Text = "当前远程任务正在执行，请先等待完成或取消";
+                }
                 return;
             }
 
             if (canReturnResults)
             {
                 this.DialogResult = DialogResult.OK;
+            }
+
+            if (isRemoteMode)
+            {
+                Hide();
+                return;
             }
 
             Close();
