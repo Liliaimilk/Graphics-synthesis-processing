@@ -33,7 +33,7 @@ namespace WindowsFormsApp1
         private const float MAX_ZOOM = 10f;
         private const float ZOOM_STEP = 0.02f;
         private const int SCROLLBAR_SIZE = 16;
-        private const float DPI = 96f;
+        private const float DPI = 300f;
         private const float MM_TO_PX = DPI / 25.4f;
 
         private readonly List<CanvasImageItem> _images = new List<CanvasImageItem>();
@@ -121,7 +121,7 @@ namespace WindowsFormsApp1
 
             if (_images.Count == 1)
             {
-                CenterScene();
+                FitSceneToViewport();
             }
             else
             {
@@ -156,8 +156,7 @@ namespace WindowsFormsApp1
 
         public void ResetView()
         {
-            _zoom = 1f;
-            CenterScene();
+            FitSceneToViewport();
             UpdateScrollBars();
             ZoomChanged?.Invoke(_zoom);
             Invalidate();
@@ -1009,6 +1008,38 @@ namespace WindowsFormsApp1
                     _images.Add(_selectedImage);
                 }
             }
+        }
+
+        private void FitSceneToViewport()
+        {
+            if (_images.Count == 0)
+            {
+                _zoom = 1f;
+                _panOffset = PointF.Empty;
+                return;
+            }
+
+            RectangleF sceneBounds = GetSceneBounds();
+            Size viewportSize = CalculateViewportSize(false, false);
+            if (viewportSize.Width <= 0 || viewportSize.Height <= 0 || sceneBounds.Width <= 0 || sceneBounds.Height <= 0)
+            {
+                _zoom = 1f;
+                CenterScene();
+                return;
+            }
+
+            float fitZoomX = viewportSize.Width / sceneBounds.Width;
+            float fitZoomY = viewportSize.Height / sceneBounds.Height;
+            _zoom = Math.Max(MIN_ZOOM, Math.Min(MAX_ZOOM, Math.Min(fitZoomX, fitZoomY)));
+
+            Rectangle viewportBounds = new Rectangle(RULER_SIZE, RULER_SIZE, viewportSize.Width, viewportSize.Height);
+            PointF viewportCenter = new PointF(viewportBounds.Left + viewportBounds.Width / 2f, viewportBounds.Top + viewportBounds.Height / 2f);
+            PointF sceneCenter = new PointF(sceneBounds.Left + sceneBounds.Width / 2f, sceneBounds.Top + sceneBounds.Height / 2f);
+            _panOffset = new PointF(
+                viewportCenter.X - sceneCenter.X * _zoom,
+                viewportCenter.Y - sceneCenter.Y * _zoom);
+
+            ClampPanOffset();
         }
 
         private void CenterScene()

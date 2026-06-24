@@ -78,7 +78,8 @@ namespace WindowsFormsApp1
                 controlCheckpoint?.Invoke();
                 progressCallback?.Invoke("正在读取素材...");
                 var foregroundData = LoadImagePixelData(materialTifPath);
-
+                
+                // 读取mask图像数据，如果是满版模式且提供了遮罩路径，则读取遮罩图像
                 ImagePixelData exclusionMaskData = null;
                 if (compositeMode == TemplateCompositeMode.FullBleed && !string.IsNullOrWhiteSpace(exclusionMaskPath))
                 {

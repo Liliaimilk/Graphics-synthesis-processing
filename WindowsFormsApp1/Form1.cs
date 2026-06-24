@@ -98,7 +98,7 @@ namespace WindowsFormsApp1
                 Location = new Point(175, 10),
                 Minimum = 10,
                 Maximum = 300,
-                Value = 100,
+                Value = 10,
                 TickFrequency = 25,
                 Width = 200,
                 Height = 30
@@ -879,9 +879,8 @@ namespace WindowsFormsApp1
                 ? TemplateCompositeMode.FullBleed
                 : TemplateCompositeMode.Standard;
             string compositeModeName = cmbCompositeMode.SelectedItem?.ToString() ?? "套图标准模式";
-            string exclusionMaskPath = compositeMode == TemplateCompositeMode.FullBleed
-                ? @"D:\matrials\3-save\mask.png"
-                : null;
+            string exclusionMaskPath = null; // 暂不支持排除蒙版功能
+            //compositeMode == TemplateCompositeMode.FullBleed? @"D:\matrials\3-save\mask.png": null;
             string ext = GetOutputExtension(format);
 
             var jobs = new List<MergeJobItem>();
