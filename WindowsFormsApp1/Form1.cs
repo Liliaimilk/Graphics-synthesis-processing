@@ -706,11 +706,13 @@ namespace WindowsFormsApp1
 
     public class MergeDialog : Form
     {
-        private const int DialogWidth = 760;
+        private const int DialogWidth = 790;
         private const int SingleDialogHeight = 560;
         private const int BatchDialogHeight = 930;
         private const int ChannelCardHeight = 44;
         private const int ChannelCardGap = 8;
+        private const int SingleDialogBottomPadding = 144;
+        private const int BatchDialogBottomPadding = 95;
 
         List<string> channelNames = new List<string>();
 
@@ -720,6 +722,10 @@ namespace WindowsFormsApp1
         private TextBox txtSeparator;
         private ComboBox cmbFormat;
         private ComboBox cmbCompositeMode;
+
+        private ComboBox cmbRotation;
+
+        private ComboBox cmbMirror;
         private CheckBox chkWhiteInk;
         private CheckBox chkVarnish;
 
@@ -740,6 +746,7 @@ namespace WindowsFormsApp1
         private Button btnCancel;
 
         private Panel channelListPanel;
+        private Label channelSectionLabel;
 
         private bool isRunning;
         private bool canReturnResults;
@@ -808,6 +815,9 @@ namespace WindowsFormsApp1
             public string CompositeModeName { get; set; }
             public TemplateCompositeMode CompositeMode { get; set; }
             public string ExclusionMaskPath { get; set; }
+
+            public string Rotation { get; set; }
+            public string Mirror { get; set; }
         }
 
         private sealed class ValidationResult
@@ -955,6 +965,7 @@ namespace WindowsFormsApp1
             return true;
         }
 
+    // 远程请求处理，构建任务列表
         private BuildJobsResult BuildJobsFromRemoteRequest(RemoteMergeRequest request)
         {
             if (!ValidateSelectedFolders())
@@ -963,6 +974,7 @@ namespace WindowsFormsApp1
             }
 
             string format = cmbFormat.SelectedItem?.ToString() ?? "TIF";
+            
             if (string.Equals(format, "PSD", StringComparison.OrdinalIgnoreCase))
             {
                 ShowStatusMessage("PSD 导出不支持", "当前版本暂不支持真实 PSD 导出，请改用 TIF、PNG 或 JPEG。", "提示", MessageBoxIcon.Warning);
@@ -1065,7 +1077,7 @@ namespace WindowsFormsApp1
             return matches[0];
         }
 
-        private BuildJobsResult BuildJobsCore(string templateFile, List<string> materialFiles, bool isBatchMode, string format)
+        private BuildJobsResult BuildJobsCore(string templateFile, List<string> materialFiles, bool isBatchMode, string format, string rotation = null, string mirror = null)
         {
             string separator = string.IsNullOrWhiteSpace(txtSeparator.Text) ? "-" : txtSeparator.Text;
             TemplateCompositeMode compositeMode = cmbCompositeMode.SelectedIndex == 1
@@ -1100,7 +1112,9 @@ namespace WindowsFormsApp1
                 Format = format,
                 CompositeMode = compositeMode,
                 CompositeModeName = compositeModeName,
-                ExclusionMaskPath = exclusionMaskPath
+                ExclusionMaskPath = exclusionMaskPath,
+                Rotation = rotation,
+                Mirror = mirror
             };
         }
 
@@ -1144,7 +1158,7 @@ namespace WindowsFormsApp1
 
             startY += rowHeight;
             var lblSeparator = CreateLabel("分隔符:", startX, startY, labelWidth);
-            txtSeparator = CreateTextBox(startX + labelWidth + 5, startY, 50);
+            txtSeparator = CreateTextBox(startX + labelWidth, startY, 50);
             txtSeparator.Text = "-";
 
             var lblFormat = CreateLabel("格式:", startX + 145, startY, 40);
@@ -1157,8 +1171,18 @@ namespace WindowsFormsApp1
             cmbCompositeMode.Items.AddRange(new object[] { "套图标准模式", "满版模式" });
             cmbCompositeMode.SelectedIndex = 0;
 
+            var lblRotation = CreateLabel("旋转:", startX + 460, startY, 40);
+            cmbRotation = CreateComboBox(startX + 505, startY, 80);
+            cmbRotation.Items.AddRange(new object[] { "0°", "90°", "180°", "270°" });
+            cmbRotation.SelectedIndex = 0;
+
+            var lblMirror = CreateLabel("镜像:", startX + 590, startY, 40);
+            cmbMirror = CreateComboBox(startX + 635, startY, 80);
+            cmbMirror.Items.AddRange(new object[] { "无", "水平", "垂直", "水平+垂直" });
+            cmbMirror.SelectedIndex = 0;
+
             startY += rowHeight;
-            var channelSectionLabel = new Label
+            channelSectionLabel = new Label
             {
                 Text = "通道设置",
                 Location = new Point(startX, startY),
@@ -1187,14 +1211,12 @@ namespace WindowsFormsApp1
             channelListPanel = new Panel
             {
                 Location = new Point(startX, startY + 30),
-                Size = new Size(DialogWidth - 56, 120),
-                BackColor = Color.FromArgb(36, 48, 72),
-                BorderStyle = BorderStyle.FixedSingle,
-                Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right
+                Size = new Size(DialogWidth - 56, 0),
+                Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
+                AutoScroll = false
             };
 
-            // 通道区占用 30(标题行) + 120(列表) 的高度，后续控件下移
-            startY += 150;
+            startY += 30;
 
             // chkWhiteInk = new CheckBox
             // {
@@ -1363,6 +1385,8 @@ namespace WindowsFormsApp1
                 lblSeparator, txtSeparator,
                 lblFormat, cmbFormat,
                 lblMode, cmbCompositeMode,
+                lblRotation, cmbRotation,
+                lblMirror, cmbMirror,
                 channelSectionLabel, addChannels, channelListPanel,
                 chkBatchMode, lblStatus,
                 btnMerge, btnClose,
@@ -1386,18 +1410,17 @@ namespace WindowsFormsApp1
             int channelNumber = nextChannelNumber++;
             var panel = new Panel
             {
-                Size = new Size(Math.Max(220, channelListPanel.ClientSize.Width - 2), ChannelCardHeight),
-                BackColor = Color.FromArgb(42, 56, 84),
-                BorderStyle = BorderStyle.FixedSingle,
-                Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
+                Size = new Size(GetChannelCardWidth(), ChannelCardHeight),
+                Anchor = AnchorStyles.Top | AnchorStyles.Left,
                 Tag = channelNumber
             };
 
             var lblChannel = new Label
             {
+                Name = "lblChannel",
                 Text = $"通道 {channelNumber}",
-                Location = new Point(12, 10),
-                Size = new Size(70, 22),
+                Location = new Point(10, 10),
+                Size = new Size(48, 22),
                 Font = new Font("微软雅黑", 9F),
                 ForeColor = Color.FromArgb(220, 225, 235),
                 BackColor = Color.Transparent,
@@ -1406,21 +1429,23 @@ namespace WindowsFormsApp1
 
             var txtChannelName = new TextBox
             {
+                Name = "txtChannelName",
                 Text = $"通道{channelNumber}",
-                Location = new Point(90, 8),
-                Size = new Size(Math.Max(180, panel.Width - 280), 26),
+                Location = new Point(62, 8),
+                Size = new Size(92, 26),
                 Font = new Font("微软雅黑", 9F),
                 BackColor = Color.FromArgb(50, 65, 90),
                 ForeColor = Color.FromArgb(220, 225, 235),
                 BorderStyle = BorderStyle.FixedSingle,
-                Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right
+                Anchor = AnchorStyles.Top | AnchorStyles.Left
             };
 
             var btnApply = new Button
             {
+                Name = "btnApply",
                 Text = "保存",
-                Size = new Size(56, 26),
-                Location = new Point(panel.Width - 122, 8),
+                Size = new Size(44, 26),
+                Location = new Point(162, 8),
                 Font = new Font("微软雅黑", 8.5F),
                 BackColor = Color.FromArgb(45, 150, 80),
                 ForeColor = Color.White,
@@ -1432,9 +1457,10 @@ namespace WindowsFormsApp1
 
             var btnDelete = new Button
             {
+                Name = "btnDelete",
                 Text = "删除",
-                Size = new Size(56, 26),
-                Location = new Point(panel.Width - 62, 8),
+                Size = new Size(44, 26),
+                Location = new Point(212, 8),
                 Font = new Font("微软雅黑", 8.5F),
                 BackColor = Color.FromArgb(180, 60, 60),
                 ForeColor = Color.White,
@@ -1457,6 +1483,7 @@ namespace WindowsFormsApp1
                 ChannelNumber = channelNumber
             });
 
+            LayoutChannelPanel(panel);
             RearrangeChannels();
             txtChannelName.Focus();
             txtChannelName.SelectAll();
@@ -1531,16 +1558,91 @@ namespace WindowsFormsApp1
         // 重新排列通道位置
         private void RearrangeChannels()
         {
-            int top = ChannelCardGap;
-            int width = Math.Max(220, channelListPanel.ClientSize.Width - ChannelCardGap * 2);
-            foreach (ChannelControl control in channelControls.OrderBy(c => c.ChannelNumber))
+            int cardWidth = GetChannelCardWidth();
+            int columnGap = ChannelCardGap;
+            int leftColumn = ChannelCardGap;
+            int rightColumn = leftColumn + cardWidth + columnGap;
+            List<ChannelControl> orderedControls = channelControls.OrderBy(c => c.ChannelNumber).ToList();
+
+            for (int i = 0; i < orderedControls.Count; i++)
             {
-                control.Panel.Location = new Point(ChannelCardGap, top);
-                control.Panel.Size = new Size(width, ChannelCardHeight);
-                top += ChannelCardHeight + ChannelCardGap;
+                ChannelControl control = orderedControls[i];
+                int columnIndex = i % 2;
+                int rowIndex = i / 2;
+                int left = columnIndex == 0 ? leftColumn : rightColumn;
+                int top = ChannelCardGap + rowIndex * (ChannelCardHeight + ChannelCardGap);
+
+                control.Panel.Location = new Point(left, top);
+                control.Panel.Size = new Size(cardWidth, ChannelCardHeight);
+                LayoutChannelPanel(control.Panel);
             }
 
-            channelListPanel.AutoScroll = true;
+            int rowCount = (orderedControls.Count + 1) / 2;
+            int contentHeight = rowCount == 0
+                ? 0
+                : ChannelCardGap + rowCount * ChannelCardHeight + Math.Max(0, rowCount - 1) * ChannelCardGap;
+
+            channelListPanel.Height = contentHeight;
+            channelListPanel.AutoScroll = false;
+            channelListPanel.AutoScrollMinSize = Size.Empty;
+
+            UpdateDialogLayout();
+        }
+
+        private void UpdateDialogLayout()
+        {
+            if (channelSectionLabel == null || channelListPanel == null || chkBatchMode == null || lblStatus == null || btnMerge == null || btnClose == null || pnlBatch == null)
+            {
+                return;
+            }
+
+            int optionsTop = channelListPanel.Bottom + 8;
+            chkBatchMode.Location = new Point(305, optionsTop + 8);
+            lblStatus.Location = new Point(400, optionsTop + 8);
+
+            int buttonTop = optionsTop + 50;
+            btnMerge.Location = new Point(20, buttonTop);
+            btnClose.Location = new Point(160, buttonTop);
+            pnlBatch.Location = new Point(20, buttonTop + 55);
+
+            int baseHeight = (chkBatchMode.Checked ? BatchDialogHeight : SingleDialogHeight) - 120;
+            int targetHeight = Math.Max(baseHeight, buttonTop + (chkBatchMode.Checked ? BatchDialogBottomPadding + pnlBatch.Height : SingleDialogBottomPadding));
+            this.Size = new Size(DialogWidth, targetHeight);
+        }
+
+        private int GetChannelCardWidth()
+        {
+            int availableWidth = channelListPanel.ClientSize.Width - ChannelCardGap * 3;
+            return Math.Max(220, availableWidth / 2);
+        }
+
+        private void LayoutChannelPanel(Panel panel)
+        {
+            if (panel == null)
+            {
+                return;
+            }
+
+            var lblChannel = panel.Controls["lblChannel"] as Label;
+            var txtChannelName = panel.Controls["txtChannelName"] as TextBox;
+            var btnApply = panel.Controls["btnApply"] as Button;
+            var btnDelete = panel.Controls["btnDelete"] as Button;
+
+            if (lblChannel == null || txtChannelName == null || btnApply == null || btnDelete == null)
+            {
+                return;
+            }
+
+            int deleteLeft = panel.Width - btnDelete.Width - 10;
+            int applyLeft = deleteLeft - btnApply.Width - 6;
+            int textLeft = txtChannelName.Left;
+            int textWidth = Math.Max(80, applyLeft - textLeft - 8);
+
+            lblChannel.Location = new Point(10, 10);
+            txtChannelName.Location = new Point(textLeft, 8);
+            txtChannelName.Size = new Size(textWidth, 26);
+            btnApply.Location = new Point(applyLeft, 8);
+            btnDelete.Location = new Point(deleteLeft, 8);
         }
 
 
@@ -1739,7 +1841,7 @@ namespace WindowsFormsApp1
                     return ".tif";
             }
         }
-
+        // 本地操作
         private BuildJobsResult BuildJobs()
         {
             if (!ValidateSelectedFolders())
@@ -1748,6 +1850,8 @@ namespace WindowsFormsApp1
             }
 
             string format = cmbFormat.SelectedItem?.ToString() ?? "TIF";
+            string rotation = cmbRotation.SelectedItem?.ToString() ?? "0°";
+            string mirror = cmbMirror.SelectedItem?.ToString() ?? "无";
             if (string.Equals(format, "PSD", StringComparison.OrdinalIgnoreCase))
             {
                 ShowStatusMessage("PSD 导出不支持", "当前版本暂不支持真实 PSD 导出，请改用 TIF、PNG 或 JPEG。", "提示", MessageBoxIcon.Warning);
@@ -1780,7 +1884,7 @@ namespace WindowsFormsApp1
                 materialFiles = new List<string> { materialFiles[0] };
             }
 
-            return BuildJobsCore(templateFile, materialFiles, isBatchMode, format);
+            return BuildJobsCore(templateFile, materialFiles, isBatchMode, format,rotation,mirror);
         }
 
         //重置对话框初始值
@@ -2116,6 +2220,8 @@ namespace WindowsFormsApp1
                                 buildResult.Format,
                                 msg => ReportProgress(job, msg),
                                 channelNames,
+                                buildResult.Rotation,
+                                buildResult.Mirror,
                                 0,
                                 0,
                                 buildResult.CompositeMode,
@@ -2137,8 +2243,17 @@ namespace WindowsFormsApp1
                     }
                     catch (Exception ex)
                     {
-                        UpdateJobStatus(job, MergeJobStatus.Failed, ex.Message);
-                        lblStatus.Text = $"处理失败: {Path.GetFileName(job.MaterialPath)}";
+                        string detail = ex.Message;
+                        string log = $"[{DateTime.Now:HH:mm:ss}] 套图失败 job={Path.GetFileName(job.MaterialPath)}{Environment.NewLine}" +
+                                     $"{ex.GetType().FullName}: {ex.Message}{Environment.NewLine}{ex.StackTrace}{Environment.NewLine}";
+                        if (ex.InnerException != null)
+                        {
+                            detail += $" | 内部: {ex.InnerException.Message}";
+                            log += $"INNER {ex.InnerException.GetType().FullName}: {ex.InnerException.Message}{Environment.NewLine}{ex.InnerException.StackTrace}{Environment.NewLine}";
+                        }
+                        Console.WriteLine(log);
+                        UpdateJobStatus(job, MergeJobStatus.Failed, detail);
+                        lblStatus.Text = $"处理失败: {Path.GetFileName(job.MaterialPath)} - {detail}";
                     }
                     finally
                     {

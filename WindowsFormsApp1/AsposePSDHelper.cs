@@ -62,10 +62,13 @@ namespace WindowsFormsApp1
             string format,
             Action<string> progressCallback,
             List<string> channelNames,
+            string rotation,
+            string mirror,
             int offsetX = 0,
             int offsetY = 0,
             TemplateCompositeMode compositeMode = TemplateCompositeMode.Standard,
             string exclusionMaskPath = null,
+            
             Action controlCheckpoint = null)
         {
             try
@@ -112,6 +115,8 @@ namespace WindowsFormsApp1
 
                 controlCheckpoint?.Invoke();
                 progressCallback?.Invoke(compositeMode == TemplateCompositeMode.FullBleed ? "正在满版合成图像..." : "正在标准套图合成图像...");
+
+                // 满版模式
                 if (compositeMode == TemplateCompositeMode.FullBleed)
                 {
                     var templateBounds = GetOpaqueBounds(backgroundData.Pixels, backgroundData.Width, backgroundData.Height);
@@ -123,6 +128,7 @@ namespace WindowsFormsApp1
 
                     DrawFullBleedPixels(backgroundData, foregroundData, templateBounds, opaqueBounds, exclusionMaskData, controlCheckpoint);
                 }
+                // 标准模式
                 else
                 {
                     Console.WriteLine($"素材贴图偏移: offsetX={offsetX}, offsetY={offsetY}");
@@ -131,9 +137,40 @@ namespace WindowsFormsApp1
 
                 using (var mergedBitmap = CreateBitmapFromArgbPixels(backgroundData.Width, backgroundData.Height, backgroundData.Pixels))
                 {
-                    controlCheckpoint?.Invoke();
-                    progressCallback?.Invoke("正在保存结果...");
-                    SaveMergedAsFormat(mergedBitmap, outputPath, format, channelNames);
+                    Bitmap current = mergedBitmap;
+                    Bitmap intermediateMirror = null;
+                    Bitmap intermediateRotation = null;
+                    try
+                    {
+                        // 应用镜像
+                        if (!string.IsNullOrWhiteSpace(mirror) && mirror != "无" && mirror != "none")
+                        {
+                            controlCheckpoint?.Invoke();
+                            progressCallback?.Invoke($"正在应用镜像 ({mirror})...");
+                            intermediateMirror = ApplyMirror(current, mirror);
+                            current = intermediateMirror;
+                        }
+
+                        // 应用旋转
+                        if (!string.IsNullOrWhiteSpace(rotation) && rotation != "0" && rotation != "无")
+                        {
+                            controlCheckpoint?.Invoke();
+                            progressCallback?.Invoke($"正在应用旋转 ({rotation})...");
+                            intermediateRotation = ApplyRotation(current, rotation);
+                            current = intermediateRotation;
+                        }
+
+                        controlCheckpoint?.Invoke();
+                        progressCallback?.Invoke("正在保存结果...");
+                        SaveMergedAsFormat(current, outputPath, format, channelNames);
+                    }
+                    finally
+                    {
+                        if (intermediateRotation != null && intermediateRotation != mergedBitmap)
+                            intermediateRotation.Dispose();
+                        if (intermediateMirror != null && intermediateMirror != mergedBitmap)
+                            intermediateMirror.Dispose();
+                    }
                 }
 
                 controlCheckpoint?.Invoke();
@@ -144,6 +181,74 @@ namespace WindowsFormsApp1
                 progressCallback?.Invoke($"图片太大或 TIFF 格式不兼容：{ex.Message}");
                 throw;
             }
+        }
+
+        // 镜像
+        private static Bitmap ApplyMirror(Bitmap source, string mirror)
+        {
+            if (source == null)
+                return null;
+            if (string.IsNullOrWhiteSpace(mirror) || mirror == "无" || mirror == "none")
+                return source;
+
+            string normalized = (mirror ?? string.Empty).Trim().ToLowerInvariant();
+            RotateFlipType flipType;
+
+            if (normalized.Contains("horizontal") || normalized.Contains("水平") || normalized == "h")
+            {
+                flipType = RotateFlipType.RotateNoneFlipX;
+            }
+            else if (normalized.Contains("vertical") || normalized.Contains("垂直") || normalized == "v")
+            {
+                flipType = RotateFlipType.RotateNoneFlipY;
+            }
+            else
+            {
+                Console.WriteLine($"未识别的镜像方向: {mirror}，跳过镜像");
+                return source;
+            }
+
+            var result = new Bitmap(source);
+            result.RotateFlip(flipType);
+            return result;
+        }
+
+        // 旋转
+        private static Bitmap ApplyRotation(Bitmap source, string rotation)
+        {
+            if (source == null)
+                return null;
+            if (string.IsNullOrWhiteSpace(rotation) || rotation == "0" || rotation == "无")
+                return source;
+
+            string normalized = (rotation ?? string.Empty).Trim().ToLowerInvariant();
+            RotateFlipType rotateType;
+
+            if (normalized == "90" || normalized == "90度" || normalized.Contains("90"))
+            {
+                rotateType = RotateFlipType.Rotate90FlipNone;
+            }
+            else if (normalized == "180" || normalized == "180度" || normalized.Contains("180"))
+            {
+                rotateType = RotateFlipType.Rotate180FlipNone;
+            }
+            else if (normalized == "270" || normalized == "270度" || normalized.Contains("270"))
+            {
+                rotateType = RotateFlipType.Rotate270FlipNone;
+            }
+            else if (normalized == "0" || string.IsNullOrWhiteSpace(normalized))
+            {
+                return source;
+            }
+            else
+            {
+                Console.WriteLine($"未识别的旋转角度: {rotation}，跳过旋转");
+                return source;
+            }
+
+            var result = new Bitmap(source);
+            result.RotateFlip(rotateType);
+            return result;
         }
 
         private static Bitmap LoadBitmapPreserveColor(string imagePath)
