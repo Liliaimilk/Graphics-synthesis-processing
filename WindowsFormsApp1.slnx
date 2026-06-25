@@ -1,4 +1,6 @@
 <Solution>
   <Folder Name="/解决方案项/" />
-  <Project Path="WindowsFormsApp1/WindowsFormsApp1.csproj" Id="2857617e-9a8d-4310-a143-471e3c59f6f2" />
+  <Project Path="WindowsFormsApp1/WindowsFormsApp1.csproj" Id="2857617e-9a8d-4310-a143-471e3c59f6f2">
+    <BuildType Project="Release" />
+  </Project>
 </Solution>
