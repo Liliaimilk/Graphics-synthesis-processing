@@ -707,8 +707,12 @@ namespace WindowsFormsApp1
     public class MergeDialog : Form
     {
         private const int DialogWidth = 760;
-        private const int SingleDialogHeight = 380;
-        private const int BatchDialogHeight = 720;
+        private const int SingleDialogHeight = 560;
+        private const int BatchDialogHeight = 930;
+        private const int ChannelCardHeight = 44;
+        private const int ChannelCardGap = 8;
+
+        List<string> channelNames = new List<string>();
 
         private TextBox txtTemplateFolder;
         private TextBox txtMaterialFolder;
@@ -735,7 +739,7 @@ namespace WindowsFormsApp1
         private Button btnPauseResume;
         private Button btnCancel;
 
-        private Panel channelPanel;
+        private Panel channelListPanel;
 
         private bool isRunning;
         private bool canReturnResults;
@@ -743,7 +747,8 @@ namespace WindowsFormsApp1
         private BatchRunState batchState;
         private RemoteMergeRequest pendingRemoteRequest;
 
-         private List<ChannelControl> channelControls = new List<ChannelControl>();
+        private readonly List<ChannelControl> channelControls = new List<ChannelControl>();
+        private int nextChannelNumber = 1;
         private readonly string[] imageExtensions = { ".psd", ".psb", ".tif", ".tiff", ".jpg", ".jpeg", ".png", ".bmp" };
 
         public string ResultPath { get; private set; }
@@ -853,15 +858,15 @@ namespace WindowsFormsApp1
                 SelectCompositeMode(request.CompositeMode);
             }
 
-            if (request.WhiteInk.HasValue)
-            {
-                chkWhiteInk.Checked = request.WhiteInk.Value;
-            }
+            // if (request.WhiteInk.HasValue)
+            // {
+            //     chkWhiteInk.Checked = request.WhiteInk.Value;
+            // }
 
-            if (request.Varnish.HasValue)
-            {
-                chkVarnish.Checked = request.Varnish.Value;
-            }
+            // if (request.Varnish.HasValue)
+            // {
+            //     chkVarnish.Checked = request.Varnish.Value;
+            // }
 
             chkBatchMode.Checked = request.MaterialNames != null && request.MaterialNames.Count > 1;
             lblStatus.Text = $"远程请求已加载: {request.DisplayName}";
@@ -1153,18 +1158,43 @@ namespace WindowsFormsApp1
             cmbCompositeMode.SelectedIndex = 0;
 
             startY += rowHeight;
+            var channelSectionLabel = new Label
+            {
+                Text = "通道设置",
+                Location = new Point(startX, startY),
+                Size = new Size(120, 24),
+                Font = new Font("微软雅黑", 9F, FontStyle.Bold),
+                ForeColor = Color.FromArgb(220, 225, 235),
+                BackColor = Color.Transparent
+            };
+
             addChannels = new Button
             {
                 Text = "+ 添加通道",
-                Location = new Point(startX + labelWidth + 5, startY),
-                Size = new Size(90, 28),
+                Location = new Point(startX + 560, startY - 3),
+                Size = new Size(110, 30),
                 Font = new Font("微软雅黑", 9F),
-                BackColor = Color.FromArgb(45, 60, 85),
+                BackColor = Color.FromArgb(45, 100, 160),
                 ForeColor = Color.FromArgb(220, 225, 235),
                 FlatStyle = FlatStyle.Flat,
-                Cursor = Cursors.Hand
+                Cursor = Cursors.Hand,
+                Anchor = AnchorStyles.Top | AnchorStyles.Right
             };
+            addChannels.FlatAppearance.BorderColor = Color.FromArgb(70, 140, 200);
+            addChannels.FlatAppearance.MouseOverBackColor = Color.FromArgb(55, 120, 180);
             addChannels.Click += addChannels_Click;
+
+            channelListPanel = new Panel
+            {
+                Location = new Point(startX, startY + 30),
+                Size = new Size(DialogWidth - 56, 120),
+                BackColor = Color.FromArgb(36, 48, 72),
+                BorderStyle = BorderStyle.FixedSingle,
+                Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right
+            };
+
+            // 通道区占用 30(标题行) + 120(列表) 的高度，后续控件下移
+            startY += 150;
 
             // chkWhiteInk = new CheckBox
             // {
@@ -1242,7 +1272,7 @@ namespace WindowsFormsApp1
             pnlBatch = new Panel
             {
                 Location = new Point(startX, startY + 55),
-                Size = new Size(DialogWidth - 56, 300),
+                Size = new Size(DialogWidth - 56, 400),
                 BackColor = Color.FromArgb(30, 40, 60),
                 BorderStyle = BorderStyle.FixedSingle,
                 Visible = false,
@@ -1273,7 +1303,7 @@ namespace WindowsFormsApp1
             lvResults = new ListView
             {
                 Location = new Point(12, 68),
-                Size = new Size(pnlBatch.Width - 24, 190),
+                Size = new Size(pnlBatch.Width - 24, 290),
                 View = View.Details,
                 FullRowSelect = true,
                 GridLines = true,
@@ -1325,7 +1355,6 @@ namespace WindowsFormsApp1
             pnlBatch.Controls.Add(lvResults);
             pnlBatch.Controls.Add(btnPauseResume);
             pnlBatch.Controls.Add(btnCancel);
-            pnlBatch.Controls.Add(addChannels);
 
             this.Controls.AddRange(new Control[] {
                 lblTemplate, txtTemplateFolder, btnBrowseTemplate,
@@ -1334,11 +1363,14 @@ namespace WindowsFormsApp1
                 lblSeparator, txtSeparator,
                 lblFormat, cmbFormat,
                 lblMode, cmbCompositeMode,
-                chkWhiteInk, chkVarnish, chkBatchMode, lblStatus,
+                channelSectionLabel, addChannels, channelListPanel,
+                chkBatchMode, lblStatus,
                 btnMerge, btnClose,
-                pnlBatch,addChannels
+                pnlBatch
             });
+            // chkWhiteInk, chkVarnish,
 
+            RearrangeChannels();
             ToggleBatchModeLayout();
         }
 
@@ -1348,115 +1380,115 @@ namespace WindowsFormsApp1
             AddNewChannel();
         }
 
-// 动态添加新通道
+        // 动态添加新通道
         private void AddNewChannel()
         {
-            
-            int channelCounter = 1;
-            int startX = 20;  // 你代码中的起始X坐标
-            int labelWidth = 80;  // 你代码中的标签宽度
-            int startY = 30;  // 你代码中的起始Y坐标
-            int channelGap = 45;  // 每个通道的垂直间距
-            // 创建一个容器来容纳通道的所有控件
-            channelPanel = new Panel
+            int channelNumber = nextChannelNumber++;
+            var panel = new Panel
             {
-                Location = new Point(10, startY + channelControls.Count * channelGap),
-                Size = new Size(500, 40),
-                Tag = channelCounter
+                Size = new Size(Math.Max(220, channelListPanel.ClientSize.Width - 2), ChannelCardHeight),
+                BackColor = Color.FromArgb(42, 56, 84),
+                BorderStyle = BorderStyle.FixedSingle,
+                Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
+                Tag = channelNumber
             };
 
-            // 通道标签（显示通道编号）
-            Label lblChannel = new Label
+            var lblChannel = new Label
             {
-                Text = $"通道 {channelCounter}:",
-                Location = new Point(0, 8),
-                Size = new Size(70, 25),
+                Text = $"通道 {channelNumber}",
+                Location = new Point(12, 10),
+                Size = new Size(70, 22),
                 Font = new Font("微软雅黑", 9F),
                 ForeColor = Color.FromArgb(220, 225, 235),
-                TextAlign = ContentAlignment.MiddleRight
+                BackColor = Color.Transparent,
+                TextAlign = ContentAlignment.MiddleLeft
             };
 
-            // 通道名称文本框（可编辑）
-            TextBox txtChannelName = new TextBox
+            var txtChannelName = new TextBox
             {
-                Text = $"通道{channelCounter}",
-                Location = new Point(75, 6),
-                Size = new Size(180, 25),
+                Text = $"通道{channelNumber}",
+                Location = new Point(90, 8),
+                Size = new Size(Math.Max(180, panel.Width - 280), 26),
                 Font = new Font("微软雅黑", 9F),
                 BackColor = Color.FromArgb(50, 65, 90),
                 ForeColor = Color.FromArgb(220, 225, 235),
                 BorderStyle = BorderStyle.FixedSingle,
-                Tag = channelCounter
+                Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right
             };
 
-            // 确认/应用按钮
-            Button btnApply = new Button
+            var btnApply = new Button
             {
-                Text = "✓",
-                Location = new Point(260, 6),
-                Size = new Size(30, 25),
-                Font = new Font("微软雅黑", 10F, FontStyle.Bold),
+                Text = "保存",
+                Size = new Size(56, 26),
+                Location = new Point(panel.Width - 122, 8),
+                Font = new Font("微软雅黑", 8.5F),
                 BackColor = Color.FromArgb(45, 150, 80),
                 ForeColor = Color.White,
                 FlatStyle = FlatStyle.Flat,
                 Cursor = Cursors.Hand,
-                Tag = channelCounter
+                Anchor = AnchorStyles.Top | AnchorStyles.Right
             };
             btnApply.Click += (s, e) => ApplyChannelName(txtChannelName, btnApply);
 
-            // 删除按钮
-            Button btnDelete = new Button
+            var btnDelete = new Button
             {
-                Text = "×",
-                Location = new Point(295, 6),
-                Size = new Size(30, 25),
-                Font = new Font("微软雅黑", 10F, FontStyle.Bold),
+                Text = "删除",
+                Size = new Size(56, 26),
+                Location = new Point(panel.Width - 62, 8),
+                Font = new Font("微软雅黑", 8.5F),
                 BackColor = Color.FromArgb(180, 60, 60),
                 ForeColor = Color.White,
                 FlatStyle = FlatStyle.Flat,
                 Cursor = Cursors.Hand,
-                Tag = channelCounter
+                Anchor = AnchorStyles.Top | AnchorStyles.Right
             };
-            btnDelete.Click += (s, e) => DeleteChannel(channelPanel,startY, channelGap);
+            btnDelete.Click += (s, e) => DeleteChannel(panel);
 
-            // 将控件添加到面板
-            channelPanel.Controls.Add(lblChannel);
-            channelPanel.Controls.Add(txtChannelName);
-            channelPanel.Controls.Add(btnApply);
-            channelPanel.Controls.Add(btnDelete);
+            panel.Controls.Add(lblChannel);
+            panel.Controls.Add(txtChannelName);
+            panel.Controls.Add(btnApply);
+            panel.Controls.Add(btnDelete);
+            channelListPanel.Controls.Add(panel);
 
-            // 将面板添加到窗体
-            this.Controls.Add(channelPanel);
-            channelControls.Add(new ChannelControl 
-            { 
-                Panel = channelPanel, 
-                TextBox = txtChannelName, 
-                ChannelNumber = channelCounter 
+            channelControls.Add(new ChannelControl
+            {
+                Panel = panel,
+                TextBox = txtChannelName,
+                ChannelNumber = channelNumber
             });
 
-            channelCounter++;
+            RearrangeChannels();
+            txtChannelName.Focus();
+            txtChannelName.SelectAll();
+        }
+
+        private void RefreshChannelNames()
+        {
+            channelNames.Clear();
+            channelNames.AddRange(channelControls
+                .Select(control => control.TextBox.Text.Trim())
+                .Where(name => !string.IsNullOrWhiteSpace(name)));
+            Console.WriteLine($"当前通道名称列表: {string.Join(", ", channelNames)}");
         }
 
         // 应用/确认通道名称
         private void ApplyChannelName(TextBox txtBox, Button btnApply)
         {
             string newName = txtBox.Text.Trim();
-            
             if (string.IsNullOrEmpty(newName))
             {
-                MessageBox.Show("通道名称不能为空！", "提示", 
+                MessageBox.Show("通道名称不能为空！", "提示",
                     MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 txtBox.Focus();
                 return;
             }
 
-            // 检查重名
             foreach (var control in channelControls)
             {
-                if (control.TextBox != txtBox && 
+                if (control.TextBox != txtBox &&
                     control.TextBox.Text.Trim().Equals(newName, StringComparison.OrdinalIgnoreCase))
                 {
-                    MessageBox.Show($"通道名称 '{newName}' 已存在，请使用其他名称！", 
+                    MessageBox.Show($"通道名称 '{newName}' 已存在，请使用其他名称！",
                         "提示", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                     txtBox.Focus();
                     txtBox.SelectAll();
@@ -1464,48 +1496,51 @@ namespace WindowsFormsApp1
                 }
             }
 
-            // 应用名称（将文本框背景色改为淡绿色表示已确认）
+            txtBox.Text = newName;
             txtBox.BackColor = Color.FromArgb(35, 70, 50);
             btnApply.BackColor = Color.FromArgb(35, 120, 60);
-            btnApply.Text = "✓";
-            
-            // 可以在这里执行其他操作，如保存到配置文件等
-            MessageBox.Show($"通道名称已更新为: {newName}", "成功", 
-                MessageBoxButtons.OK, MessageBoxIcon.Information);
+            btnApply.Text = "已保存";
+            RefreshChannelNames();
+            lblStatus.Text = $"通道名称已更新: {newName}";
         }
 
         // 删除通道
-        private void DeleteChannel(Panel panel, int startY, int channelGap)
+        private void DeleteChannel(Panel panel)
         {
-            var result = MessageBox.Show($"确定要删除通道 {panel.Tag} 吗？", 
+            ChannelControl control = channelControls.FirstOrDefault(c => c.Panel == panel);
+            string channelName = control?.TextBox.Text.Trim();
+            var result = MessageBox.Show($"确定要删除通道 {channelName} 吗？",
                 "确认删除", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
-            
+
             if (result == DialogResult.Yes)
             {
-                // 移除面板
-                this.Controls.Remove(panel);
-                
-                // 从列表中移除
-                var control = channelControls.FirstOrDefault(c => c.Panel == panel);
+                channelListPanel.Controls.Remove(panel);
+                panel.Dispose();
+
                 if (control != null)
                 {
                     channelControls.Remove(control);
                 }
 
-                // 重新排列剩余通道的位置
-                RearrangeChannels(startY, channelGap);
+                RefreshChannelNames();
+                RearrangeChannels();
+                lblStatus.Text = string.IsNullOrWhiteSpace(channelName) ? "已删除通道" : $"已删除通道: {channelName}";
             }
         }
 
         // 重新排列通道位置
-        private void RearrangeChannels(int startY, int channelGap)
+        private void RearrangeChannels()
         {
-            int index = 0;
-            foreach (var control in channelControls.OrderBy(c => c.ChannelNumber))
+            int top = ChannelCardGap;
+            int width = Math.Max(220, channelListPanel.ClientSize.Width - ChannelCardGap * 2);
+            foreach (ChannelControl control in channelControls.OrderBy(c => c.ChannelNumber))
             {
-                control.Panel.Location = new Point(10, startY + index * channelGap);
-                index++;
+                control.Panel.Location = new Point(ChannelCardGap, top);
+                control.Panel.Size = new Size(width, ChannelCardHeight);
+                top += ChannelCardHeight + ChannelCardGap;
             }
+
+            channelListPanel.AutoScroll = true;
         }
 
 
@@ -1592,6 +1627,11 @@ namespace WindowsFormsApp1
             pnlBatch.Visible = chkBatchMode.Checked;
             this.Size = new Size(DialogWidth, chkBatchMode.Checked ? BatchDialogHeight : SingleDialogHeight);
             btnMerge.Text = isRunning ? "处理中..." : (chkBatchMode.Checked ? "开始批量套图" : "开始套图");
+
+            if (chkBatchMode.Checked)
+            {
+                RearrangeChannels();
+            }
 
             if (!chkBatchMode.Checked && !isRunning)
             {
@@ -1846,8 +1886,8 @@ namespace WindowsFormsApp1
             txtSeparator.Enabled = !busy;
             cmbFormat.Enabled = !busy;
             cmbCompositeMode.Enabled = !busy;
-            chkWhiteInk.Enabled = !busy;
-            chkVarnish.Enabled = !busy;
+            // chkWhiteInk.Enabled = !busy;
+            // chkVarnish.Enabled = !busy;
             chkBatchMode.Enabled = !busy;
             btnBrowseTemplate.Enabled = !busy;
             btnBrowseMaterial.Enabled = !busy;
@@ -2075,8 +2115,7 @@ namespace WindowsFormsApp1
                                 job.OutputPath,
                                 buildResult.Format,
                                 msg => ReportProgress(job, msg),
-                                chkWhiteInk.Checked ? "White" : null,
-                                chkVarnish.Checked ? "Varnish" : null,
+                                channelNames,
                                 0,
                                 0,
                                 buildResult.CompositeMode,

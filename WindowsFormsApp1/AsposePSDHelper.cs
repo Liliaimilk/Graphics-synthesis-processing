@@ -61,8 +61,7 @@ namespace WindowsFormsApp1
             string outputPath,
             string format,
             Action<string> progressCallback,
-            string whiteInkChannelName = null,
-            string varnishChannelName = null,
+            List<string> channelNames,
             int offsetX = 0,
             int offsetY = 0,
             TemplateCompositeMode compositeMode = TemplateCompositeMode.Standard,
@@ -101,7 +100,7 @@ namespace WindowsFormsApp1
                     using (var emptyBitmap = CreateBitmapFromArgbPixels(backgroundData.Width, backgroundData.Height, backgroundData.Pixels))
                     {
                         controlCheckpoint?.Invoke();
-                        SaveMergedAsFormat(emptyBitmap, outputPath, format, whiteInkChannelName, varnishChannelName);
+                        SaveMergedAsFormat(emptyBitmap, outputPath, format, channelNames);
                     }
                     return;
                 }
@@ -134,7 +133,7 @@ namespace WindowsFormsApp1
                 {
                     controlCheckpoint?.Invoke();
                     progressCallback?.Invoke("正在保存结果...");
-                    SaveMergedAsFormat(mergedBitmap, outputPath, format, whiteInkChannelName, varnishChannelName);
+                    SaveMergedAsFormat(mergedBitmap, outputPath, format, channelNames);
                 }
 
                 controlCheckpoint?.Invoke();
@@ -819,7 +818,7 @@ namespace WindowsFormsApp1
             }
         }
 
-        private static void SaveMergedAsFormat(Bitmap bitmap, string outputPath, string format, string whiteInkChannelName = null, string varnishChannelName = null)
+        private static void SaveMergedAsFormat(Bitmap bitmap, string outputPath, string format, List<string> channelNames)
         {
             if (bitmap == null)
                 throw new ArgumentNullException(nameof(bitmap));
@@ -841,7 +840,7 @@ namespace WindowsFormsApp1
                     break;
                 case "TIF":
                 case "TIFF":
-                    SaveAsTiffWithSpotChannels(bitmap, outputPath, whiteInkChannelName, varnishChannelName);
+                    SaveAsTiffWithSpotChannels(bitmap, outputPath, channelNames);
                     break;
                 default:
                     SaveAsCmykTiff(bitmap, outputPath);
@@ -854,21 +853,21 @@ namespace WindowsFormsApp1
             throw new NotSupportedException("当前版本暂不支持真实 PSD 导出，请改用 TIF、PNG 或 JPEG。");
         }
 
-        private static void SaveAsTiffWithSpotChannels(Bitmap bitmap, string outputPath, string whiteInkChannelName = null, string varnishChannelName = null)
+        private static void SaveAsTiffWithSpotChannels(Bitmap bitmap, string outputPath, List<string> channelNames)
         {
             if (bitmap == null)
                 throw new ArgumentNullException(nameof(bitmap));
 
-            bool addWhiteInk = !string.IsNullOrWhiteSpace(whiteInkChannelName);
-            bool addVarnish = !string.IsNullOrWhiteSpace(varnishChannelName);
-
-            if (!addWhiteInk && !addVarnish)
+            
+            // 不添加额外通道时，直接保存为 CMYK TIFF
+            if (channelNames == null || channelNames.Count == 0)
             {
                 SaveAsCmykTiff(bitmap, outputPath);
                 return;
             }
 
-            SaveAsCmykTiffWithExtraChannels(bitmap, outputPath, addWhiteInk, addVarnish, whiteInkChannelName, varnishChannelName);
+            // 添加额外通道时，保存为 CMYK TIFF 并附加占位通道
+            SaveAsCmykTiffWithExtraChannels(bitmap, outputPath, channelNames);
         }
 
         private static void SaveAsCmykTiff(Bitmap bitmap, string outputPath)
@@ -895,13 +894,14 @@ namespace WindowsFormsApp1
             public byte Opacity { get; set; }
         }
 
-        private static void SaveAsCmykTiffWithExtraChannels(Bitmap bitmap, string outputPath, bool addWhiteInk, bool addVarnish, string whiteInkChannelName, string varnishChannelName)
+        private static void SaveAsCmykTiffWithExtraChannels(Bitmap bitmap, string outputPath, List<string> channelNames)
         {
             int width = bitmap.Width;
             int height = bitmap.Height;
             var sourceData = ExtractPixelData(bitmap);
 
             bool hasTransparency = false;
+            // 检查图片是否有透明或半透明区域
             for (int i = 0; i < sourceData.Pixels.Length; i++)
             {
                 if (((sourceData.Pixels[i] >> 24) & 0xFF) < 255)
@@ -911,14 +911,14 @@ namespace WindowsFormsApp1
                 }
             }
 
-            int placeholderChannelCount = (addWhiteInk ? 1 : 0) + (addVarnish ? 1 : 0);
+            int placeholderChannelCount = channelNames.Count;
             int extraSampleCount = placeholderChannelCount + (hasTransparency ? 1 : 0);
             int totalSamples = 4 + extraSampleCount;
             var placeholderChannelNames = new List<string>();
-            if (addWhiteInk)
-                placeholderChannelNames.Add(whiteInkChannelName);
-            if (addVarnish)
-                placeholderChannelNames.Add(varnishChannelName);
+            foreach (var name in channelNames)
+            {
+                placeholderChannelNames.Add(name ?? string.Empty);
+            }
 
             using (var ms = new MemoryStream())
             {
@@ -979,7 +979,6 @@ namespace WindowsFormsApp1
                                 var pixel = pixels.GetPixel(x, y);
                                 byte alpha = (byte)((sourceData.Pixels[pixelIndex] >> 24) & 0xFF);
                                 byte placeholderValue = alpha;
-                                Console.WriteLine($"像素[{x},{y}] - Alpha: {alpha}");
 
                                 scanline[destIdx + 0] = pixel.GetChannel(0);
                                 scanline[destIdx + 1] = pixel.GetChannel(1);
@@ -990,11 +989,10 @@ namespace WindowsFormsApp1
                                 if (hasTransparency)
                                     scanline[destIdx + extraChannelIndex++] = alpha;
 
-                                if (addWhiteInk)
+                                for (int i = 0; i < placeholderChannelCount; i++)
+                                {
                                     scanline[destIdx + extraChannelIndex++] = placeholderValue;
-
-                                if (addVarnish)
-                                    scanline[destIdx + extraChannelIndex++] = placeholderValue;
+                                }
                             }
 
                             tif.WriteScanline(scanline, y);
@@ -1003,7 +1001,7 @@ namespace WindowsFormsApp1
                 }
             }
 
-            Console.WriteLine($"已输出占位双通道 TIFF: White={whiteInkChannelName}, Varnish={varnishChannelName}{(hasTransparency ? "，并保留透明通道" : string.Empty)}");
+            Console.WriteLine($"已输出占位扩展通道 TIFF: {placeholderChannelCount} 个通道{(hasTransparency ? "，并保留透明通道" : string.Empty)}");
         }
 
         private static void TryWritePhotoshopChannelNames(Tiff tif, List<string> extraChannelNames)
