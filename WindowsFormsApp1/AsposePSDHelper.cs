@@ -1090,8 +1090,28 @@ namespace WindowsFormsApp1
             {
                 return LoadBitmapPreserveColor(imagePath);
             }
-            catch
+            catch (Exception ex)
             {
+                // 不要吞掉异常：打包后预检失败时，真正原因（缺 Magick.Native-*.dll、
+                // 缺 Aspose/LibTiff 程序集、Aspose license、x86/x64 架构不匹配等）就在这里。
+                // 记录完整异常类型与堆栈，便于在打包环境下定位“IDE 正常但发布后失败”的问题。
+                try
+                {
+                    string logPath = Path.Combine(
+                        AppDomain.CurrentDomain.BaseDirectory,
+                        "GeneratePreview_error.log");
+                    File.AppendAllText(logPath,
+                        $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] imagePath={imagePath}{Environment.NewLine}" +
+                        $"{ex.GetType().FullName}: {ex.Message}{Environment.NewLine}" +
+                        $"{ex.StackTrace}{Environment.NewLine}" +
+                        (ex.InnerException != null
+                            ? $"INNER {ex.InnerException.GetType().FullName}: {ex.InnerException.Message}{Environment.NewLine}{ex.InnerException.StackTrace}{Environment.NewLine}"
+                            : string.Empty) +
+                        new string('-', 60) + Environment.NewLine);
+                }
+                catch { /* 日志写入失败时不影响主流程 */ }
+
+                Console.WriteLine($"GeneratePreview 失败: {ex.GetType().FullName}: {ex.Message}");
                 return null;
             }
         }
