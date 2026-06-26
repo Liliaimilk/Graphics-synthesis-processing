@@ -46,8 +46,6 @@ namespace WindowsFormsApp1
         private Button loadTiffButton;
         private Button btnClose;
         private Label lblStatus;
-
-        // Right panel controls
         private Panel previewHost;
         private PictureBox picPreview;
         private Label lblPreviewTitle;
@@ -66,7 +64,7 @@ namespace WindowsFormsApp1
             SetupControls();
             LoadSavedPaths();
             // 预览加载
-            // RefreshPreview();
+            RefreshPreview();
         }
 
         private void SetupDarkTheme()
@@ -361,10 +359,42 @@ namespace WindowsFormsApp1
         {
             // Optional: could disable auto-refresh for now
         }
-
+        // 手动载入tiff
         private void LoadTiffButton_Click(object sender, EventArgs e)
         {
-            
+            using (OpenFileDialog dialog = new OpenFileDialog())
+            {
+                dialog.Title = "选择 TIFF 文件";
+                dialog.Filter = "TIFF 文件|*.tif;*.tiff|所有文件|*.*";
+                dialog.Multiselect = true;
+                if (!string.IsNullOrWhiteSpace(txtSourceFolder.Text) && Directory.Exists(txtSourceFolder.Text))
+                    dialog.InitialDirectory = txtSourceFolder.Text;
+
+                if (dialog.ShowDialog(this) != DialogResult.OK)
+                    return;
+
+                List<string> selectedFiles = dialog.FileNames
+                    .Where(File.Exists)
+                    .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+
+                if (selectedFiles.Count == 0)
+                {
+                    lblStatus.Text = "未选择有效 TIFF 文件";
+                    RenderEmptyPreview("未选择有效 TIFF 文件");
+                    return;
+                }
+
+                foreach (string selectedFile in selectedFiles)
+                {
+                    if (!currentImageFiles.Any(existing => string.Equals(existing, selectedFile, StringComparison.OrdinalIgnoreCase)))
+                    {
+                        currentImageFiles.Add(selectedFile);
+                    }
+                }
+
+                RefreshPreview("loaded");
+            }
         }
 
         // 刷新预览
@@ -389,7 +419,7 @@ namespace WindowsFormsApp1
                 }
 
                 // 一键排版,获取图片资源
-                if(mode == "all")
+                if (mode == "all")
                 {
                     string sourceFolder = txtSourceFolder.Text.Trim();
                     List<string> imageFiles = new List<string>();
@@ -399,7 +429,7 @@ namespace WindowsFormsApp1
                     }
                     currentImageFiles = imageFiles;
                 }
-               
+
 
                 // 准备版面布局
                 LayoutOutputHelper.PreparedLayout prepared;
@@ -415,20 +445,21 @@ namespace WindowsFormsApp1
                 }
 
                 // 更新预览信息和状态
-                if(mode == "all")
+                if (mode == "all")
                 {
                     UpdatePreviewSummary(prepared, currentImageFiles);
-                    // 渲染预览图像
-                    RenderPreview(prepared,currentImageFiles);
+                    RenderPreview(prepared, currentImageFiles);
+                }
+                else if (mode == "loaded")
+                {
+                    UpdatePreviewSummary(prepared, currentImageFiles);
+                    RenderPreview(prepared, currentImageFiles);
                 }
                 else
                 {
-                    
                     RenderPreview(prepared);
                 }
 
-               
-                
 
                 lblStatus.Text = "预览已刷新";
             }
@@ -748,9 +779,11 @@ namespace WindowsFormsApp1
 
         private LayoutOutputRequest BuildRequest()
         {
-            if (string.IsNullOrWhiteSpace(txtSourceFolder.Text) || !Directory.Exists(txtSourceFolder.Text))
+            bool hasSourceFolder = !string.IsNullOrWhiteSpace(txtSourceFolder.Text) && Directory.Exists(txtSourceFolder.Text);
+            bool hasManualFiles = currentImageFiles != null && currentImageFiles.Count > 0;
+            if (!hasSourceFolder && !hasManualFiles)
             {
-                ShowWarning("请选择有效的套图结果源目录");
+                ShowWarning("请选择有效的套图结果源目录，或先载入 TIFF 文件");
                 return null;
             }
 
@@ -780,6 +813,7 @@ namespace WindowsFormsApp1
                 SourceFolder = txtSourceFolder.Text.Trim(),
                 OutputFolder = txtOutputFolder.Text.Trim(),
                 OutputFileName = txtOutputFileName.Text.Trim(),
+                ManualImageFiles = hasManualFiles ? currentImageFiles.ToList() : null,
                 Settings = new SheetLayoutSettings
                 {
                     SheetWidthMm = sheetWidth,

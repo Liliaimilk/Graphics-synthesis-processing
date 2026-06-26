@@ -31,6 +31,7 @@ namespace WindowsFormsApp1
         public string OutputFolder { get; set; }
         public string OutputFileName { get; set; }
         public SheetLayoutSettings Settings { get; set; }
+        public IReadOnlyList<string> ManualImageFiles { get; set; }
     }
 
     public sealed class LayoutOutputResult
@@ -171,14 +172,15 @@ namespace WindowsFormsApp1
                 throw new ArgumentNullException(nameof(request));
             if (request.Settings == null)
                 throw new ArgumentNullException(nameof(request.Settings));
-            if (string.IsNullOrWhiteSpace(request.SourceFolder) || !Directory.Exists(request.SourceFolder))
-                throw new DirectoryNotFoundException("套图结果源目录无效");
-            if (string.IsNullOrWhiteSpace(request.OutputFolder) || !Directory.Exists(request.OutputFolder))
-                throw new DirectoryNotFoundException("大图输出目录无效");
 
-            List<string> imageFiles = GetImageFiles(request.SourceFolder);
+            List<string> imageFiles = request.ManualImageFiles != null && request.ManualImageFiles.Count > 0
+                ? request.ManualImageFiles.ToList()
+                : GetImageFiles(request.SourceFolder);
             if (imageFiles.Count == 0)
                 throw new InvalidOperationException("源目录中未找到可用图片");
+
+            if (string.IsNullOrWhiteSpace(request.OutputFolder) || !Directory.Exists(request.OutputFolder))
+                throw new DirectoryNotFoundException("大图输出目录无效");
 
             PreparedLayout prepared = PrepareLayout(request.Settings);
             if (imageFiles.Count > prepared.Capacity)
@@ -243,7 +245,7 @@ namespace WindowsFormsApp1
             int top = slot.Top + (slot.Height - targetHeight) / 2;
             return new Rectangle(left, top, targetWidth, targetHeight);
         }
-
+        // 映射毫米到像素计算
         private static int MmToPixels(decimal millimeters, decimal dpi)
         {
             decimal inches = millimeters / 25.4m;
