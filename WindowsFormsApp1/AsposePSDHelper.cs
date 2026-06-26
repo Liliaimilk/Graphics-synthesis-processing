@@ -251,6 +251,16 @@ namespace WindowsFormsApp1
             return result;
         }
 
+        public static Bitmap LoadBitmapForLayout(string imagePath)
+        {
+            return LoadBitmapPreserveColor(imagePath);
+        }
+
+        public static void SaveBitmapAsFlatTiff(Bitmap bitmap, string outputPath)
+        {
+            SaveAsCmykTiff(bitmap, outputPath);
+        }
+
         private static Bitmap LoadBitmapPreserveColor(string imagePath)
         {
             var pixelData = LoadImagePixelData(imagePath);

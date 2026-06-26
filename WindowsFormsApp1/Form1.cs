@@ -83,6 +83,7 @@ namespace WindowsFormsApp1
         private Label lblStatus;
         private Label lblZoom;
         private Button btnMergeTool;
+        private Button btnLayoutOutputTool;
         private Button btnMoveTool;
         private ToolTip toolbarToolTip;
 
@@ -153,10 +154,26 @@ namespace WindowsFormsApp1
             btnMergeTool.FlatAppearance.MouseOverBackColor = Color.FromArgb(55, 120, 180);
             btnMergeTool.Click += BtnMergeTool_Click;
 
+            btnLayoutOutputTool = new Button
+            {
+                Text = "排版输出",
+                Location = new Point(100, 10),
+                Size = new Size(96, 28),
+                Font = new Font("微软雅黑", 10F),
+                BackColor = Color.FromArgb(45, 100, 160),
+                ForeColor = Color.FromArgb(220, 225, 235),
+                FlatStyle = FlatStyle.Flat,
+                Cursor = Cursors.Hand,
+                Tag = "排版输出"
+            };
+            btnLayoutOutputTool.FlatAppearance.BorderColor = Color.FromArgb(70, 140, 200);
+            btnLayoutOutputTool.FlatAppearance.MouseOverBackColor = Color.FromArgb(55, 120, 180);
+            btnLayoutOutputTool.Click += BtnLayoutOutputTool_Click;
+
             zoomLabel = new Label
             {
                 Text = "缩放: 100%",
-                Location = new Point(110, 10),
+                Location = new Point(220, 10),
                 Size = new Size(60, 28),
                 Font = new Font("微软雅黑", 9F),
                 ForeColor = Color.FromArgb(200, 205, 215),
@@ -166,7 +183,7 @@ namespace WindowsFormsApp1
 
             zoomTrackBar = new TrackBar
             {
-                Location = new Point(175, 10),
+                Location = new Point(285, 10),
                 Minimum = 10,
                 Maximum = 300,
                 Value = 10,
@@ -179,7 +196,7 @@ namespace WindowsFormsApp1
             resetZoomButton = new Button
             {
                 Text = "重置",
-                Location = new Point(385, 10),
+                Location = new Point(495, 10),
                 Size = new Size(50, 28),
                 Font = new Font("微软雅黑", 9F),
                 BackColor = Color.FromArgb(40, 55, 80),
@@ -190,6 +207,7 @@ namespace WindowsFormsApp1
             resetZoomButton.Click += (s, e) => canvas?.ResetView();
 
             toolbarPanel.Controls.Add(btnMergeTool);
+            toolbarPanel.Controls.Add(btnLayoutOutputTool);
             toolbarPanel.Controls.Add(zoomLabel);
             toolbarPanel.Controls.Add(zoomTrackBar);
             toolbarPanel.Controls.Add(resetZoomButton);
@@ -635,6 +653,18 @@ namespace WindowsFormsApp1
                     {
                         LoadResultToCanvas(dialog.ResultPath);
                     }
+                }
+            }
+        }
+
+        private void BtnLayoutOutputTool_Click(object sender, EventArgs e)
+        {
+            using (var dialog = new LayoutOutputDialog())
+            {
+                dialog.Owner = this;
+                if (dialog.ShowDialog(this) == DialogResult.OK && !string.IsNullOrEmpty(dialog.ResultPath))
+                {
+                    LoadResultToCanvas(dialog.ResultPath);
                 }
             }
         }
