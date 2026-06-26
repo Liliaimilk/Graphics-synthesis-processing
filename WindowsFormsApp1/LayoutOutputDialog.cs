@@ -903,6 +903,8 @@ namespace WindowsFormsApp1
             btnRefreshPreview.Enabled = !busy;
             btnRun.Enabled = !busy;
             btnClose.Enabled = !busy;
+            btnPreviewAll.Enabled = !busy;
+            loadTiffButton.Enabled = !busy;
             btnRun.Text = busy ? "处理中..." : "开始排版输出";
         }
 

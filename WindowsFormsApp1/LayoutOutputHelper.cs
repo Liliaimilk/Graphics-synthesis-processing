@@ -55,6 +55,9 @@ namespace WindowsFormsApp1
             public List<Rectangle> Slots { get; set; } = new List<Rectangle>();
         }
 
+        private const string WhiteInkChannelName = "whiteInk";
+        private const string VarnishChannelName = "varnish";
+
         public static PreparedLayout PrepareLayout(SheetLayoutSettings settings)
         {
             if (settings == null)
@@ -220,7 +223,9 @@ namespace WindowsFormsApp1
                 }
 
                 progressCallback?.Invoke("正在导出 TIF...");
-                AsposePSDHelper.SaveBitmapAsFlatTiff(canvas, outputPath);
+
+                // 创建额外通道
+                AsposePSDHelper.SaveBitmapAsTiffWithSpotChannels(canvas, outputPath, new List<string> { WhiteInkChannelName, VarnishChannelName });
             }
 
             progressCallback?.Invoke("排版完成");

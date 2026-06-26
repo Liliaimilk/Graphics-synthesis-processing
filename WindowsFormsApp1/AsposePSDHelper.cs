@@ -261,6 +261,11 @@ namespace WindowsFormsApp1
             SaveAsCmykTiff(bitmap, outputPath);
         }
 
+        public static void SaveBitmapAsTiffWithSpotChannels(Bitmap bitmap, string outputPath, List<string> channelNames)
+        {
+            SaveAsTiffWithSpotChannels(bitmap, outputPath, channelNames);
+        }
+
         private static Bitmap LoadBitmapPreserveColor(string imagePath)
         {
             var pixelData = LoadImagePixelData(imagePath);
@@ -1065,7 +1070,7 @@ namespace WindowsFormsApp1
                             $"Placeholder TIFF extra channels: {string.Join(", ", placeholderChannelNames)}");
 
                         var photoshopChannelNames = new List<string>();
-                        if (hasTransparency)
+                         if (hasTransparency)
                             photoshopChannelNames.Add("Alpha");
                         photoshopChannelNames.AddRange(placeholderChannelNames);
                         TryWritePhotoshopChannelNames(tif, photoshopChannelNames);
