@@ -42,6 +42,8 @@ namespace WindowsFormsApp1
 
         private Button btnPreviewAll;
         private Button btnRun;
+
+        private Button loadTiffButton;
         private Button btnClose;
         private Label lblStatus;
 
@@ -204,7 +206,7 @@ namespace WindowsFormsApp1
                 FlatStyle = FlatStyle.Flat,
                 Cursor = Cursors.Hand
             };
-            btnPreviewAll.Click += (s, e) => PreviewAll();
+            btnPreviewAll.Click += (s, e) => RefreshPreview("all");
             leftPanel.Controls.Add(btnPreviewAll);
 
             btnRefreshPreview = new Button
@@ -248,6 +250,22 @@ namespace WindowsFormsApp1
             };
             btnClose.Click += BtnClose_Click;
             leftPanel.Controls.Add(btnClose);
+
+            startY += rowHeight + 10;
+            loadTiffButton = new Button
+            {
+                Text = "载入TIFF",
+                Location = new Point(startX, startY),
+                Size = new Size(120, 32),
+                Font = new Font("微软雅黑", 9F),
+                BackColor = Color.FromArgb(55, 85, 120),
+                ForeColor = Color.FromArgb(220, 225, 235),
+                FlatStyle = FlatStyle.Flat,
+                Cursor = Cursors.Hand
+            };
+            loadTiffButton.Click+= (s, e) => LoadTiffButton_Click(s, e);
+            leftPanel.Controls.Add(loadTiffButton);
+
 
             // Status label
             startY += rowHeight + 12;
@@ -344,21 +362,13 @@ namespace WindowsFormsApp1
             // Optional: could disable auto-refresh for now
         }
 
-        // 一键排版
-        private void PreviewAll()
+        private void LoadTiffButton_Click(object sender, EventArgs e)
         {
-            if (currentImageFiles.Count == 0)
-            {
-                MessageBox.Show("当前没有可预览的图片，请先刷新预览。", "提示", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                return;
-            }
-
             
         }
 
-
         // 刷新预览
-        private void RefreshPreview()
+        private void RefreshPreview(string mode = null)
         {
             if (isRunning)
                 return;
@@ -378,14 +388,18 @@ namespace WindowsFormsApp1
                     return;
                 }
 
-                // 获取图片资源
-                string sourceFolder = txtSourceFolder.Text.Trim();
-                List<string> imageFiles = new List<string>();
-                if (!string.IsNullOrWhiteSpace(sourceFolder) && Directory.Exists(sourceFolder))
+                // 一键排版,获取图片资源
+                if(mode == "all")
                 {
-                    imageFiles = LayoutOutputHelper.GetImageFiles(sourceFolder);
+                    string sourceFolder = txtSourceFolder.Text.Trim();
+                    List<string> imageFiles = new List<string>();
+                    if (!string.IsNullOrWhiteSpace(sourceFolder) && Directory.Exists(sourceFolder))
+                    {
+                        imageFiles = LayoutOutputHelper.GetImageFiles(sourceFolder);
+                    }
+                    currentImageFiles = imageFiles;
                 }
-                currentImageFiles = imageFiles;
+               
 
                 // 准备版面布局
                 LayoutOutputHelper.PreparedLayout prepared;
@@ -401,10 +415,20 @@ namespace WindowsFormsApp1
                 }
 
                 // 更新预览信息和状态
-                UpdatePreviewSummary(prepared, imageFiles);
+                if(mode == "all")
+                {
+                    UpdatePreviewSummary(prepared, currentImageFiles);
+                    // 渲染预览图像
+                    RenderPreview(prepared,currentImageFiles);
+                }
+                else
+                {
+                    
+                    RenderPreview(prepared);
+                }
 
-                // 渲染预览图像
-                RenderPreview(prepared, imageFiles);
+               
+                
 
                 lblStatus.Text = "预览已刷新";
             }
@@ -523,7 +547,7 @@ namespace WindowsFormsApp1
             }
         }
         // 渲染预览图像
-        private void RenderPreview(LayoutOutputHelper.PreparedLayout prepared, List<string> imageFiles)
+        private void RenderPreview(LayoutOutputHelper.PreparedLayout prepared,List<string> imageFiles = null)
         {
             int availW = RightPanelWidth - 12;
             int availH = previewHost.Height - 12;
@@ -574,9 +598,9 @@ namespace WindowsFormsApp1
                     Rectangle clipSlot = Rectangle.Intersect(canvasRect, scaledSlot);
                     if (clipSlot.Width <= 0 || clipSlot.Height <= 0)
                         continue;
-
+                    
                     // 绘制缩略图或占位
-                    if (i < imageFiles.Count)
+                    if (imageFiles != null && i < imageFiles.Count)
                     {
                         // 有图像 - 尝试绘制缩略图
                         Image thumb = GetThumbnail(imageFiles[i], clipSlot.Width, clipSlot.Height);
@@ -663,7 +687,7 @@ namespace WindowsFormsApp1
 
             try
             {
-                // Try using preview generation
+                // 生成预览图
                 using (Bitmap preview = AsposePSDHelper.GeneratePreview(imagePath))
                 {
                     if (preview == null)
