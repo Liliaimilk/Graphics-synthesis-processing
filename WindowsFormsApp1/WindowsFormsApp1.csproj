@@ -86,6 +86,10 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="AsposePSDHelper.cs" />
+    <Compile Include="LayoutOutputDialog.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="LayoutOutputHelper.cs" />
     <Compile Include="MagickImageCollection.cs" />
     <Compile Include="PSDAnalyzer.cs" />
     <Compile Include="Form1.cs" />

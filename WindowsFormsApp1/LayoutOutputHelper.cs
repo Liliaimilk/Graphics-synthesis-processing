@@ -216,6 +216,7 @@ namespace WindowsFormsApp1
 
                         using (Bitmap source = AsposePSDHelper.LoadBitmapForLayout(imagePath))
                         {
+                            // 先按等比缩放把素材完整塞进格位，再居中绘制。
                             Rectangle targetRect = CalculateContainRect(source.Size, slot);
                             graphics.DrawImage(source, targetRect);
                         }
@@ -224,7 +225,7 @@ namespace WindowsFormsApp1
 
                 progressCallback?.Invoke("正在导出 TIF...");
 
-                // 创建额外通道
+                // 最终输出单张大图 TIFF，并顺便写入额外通道。
                 AsposePSDHelper.SaveBitmapAsTiffWithSpotChannels(canvas, outputPath, new List<string> { WhiteInkChannelName, VarnishChannelName });
             }
 

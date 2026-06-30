@@ -92,6 +92,7 @@ namespace WindowsFormsApp1
                     Console.WriteLine($"摄像头遮罩尺寸: W={exclusionMaskData.Width}, H={exclusionMaskData.Height}");
                 }
 
+                // 先找出素材里真正有内容的非透明区域，后续贴图都以它为准。
                 var opaqueBounds = GetOpaqueBounds(foregroundData.Pixels, foregroundData.Width, foregroundData.Height);
                 int opaquePixels = CountOpaquePixels(foregroundData.Pixels);
                 Console.WriteLine($"素材非透明像素: {opaquePixels}");
@@ -117,6 +118,7 @@ namespace WindowsFormsApp1
                 progressCallback?.Invoke(compositeMode == TemplateCompositeMode.FullBleed ? "正在满版合成图像..." : "正在标准套图合成图像...");
 
                 // 满版模式
+                // 满版模式按模板可用区域和素材有效区域做覆盖式合成。
                 if (compositeMode == TemplateCompositeMode.FullBleed)
                 {
                     var templateBounds = GetOpaqueBounds(backgroundData.Pixels, backgroundData.Width, backgroundData.Height);
@@ -615,6 +617,8 @@ namespace WindowsFormsApp1
             }
         }
 
+
+        // 贴合区域大小及比例操作
         private static void DrawFullBleedPixels(
             ImagePixelData background,
             ImagePixelData foreground,
@@ -788,7 +792,7 @@ namespace WindowsFormsApp1
 
             backgroundPixels[backgroundIndex] = (outA << 24) | (outR << 16) | (outG << 8) | outB;
         }
-
+        //遍历元素，去除空白
         private static Rectangle GetOpaqueBounds(int[] argbPixels, int width, int height)
         {
             int minX = width;
