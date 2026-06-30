@@ -36,6 +36,7 @@ namespace WindowsFormsApp1
         private TextBox txtVerticalGap;
         private TextBox txtRows;
         private TextBox txtColumns;
+        private TextBox txtScanInput;
         private Button btnBrowseSource;
         private Button btnBrowseOutput;
         private Button btnRefreshPreview;
@@ -63,6 +64,8 @@ namespace WindowsFormsApp1
             SetupDarkTheme();
             SetupControls();
             LoadSavedPaths();
+            Shown += (s, e) => FocusScanInput();
+            Activated += (s, e) => FocusScanInput();
             // 预览加载
             RefreshPreview();
         }
@@ -264,6 +267,12 @@ namespace WindowsFormsApp1
             loadTiffButton.Click+= (s, e) => LoadTiffButton_Click(s, e);
             leftPanel.Controls.Add(loadTiffButton);
 
+            leftPanel.Controls.Add(CreateLabel("扫码文件名:", startX + 130, startY + 3, 85));
+            txtScanInput = CreateTextBox(startX + 220, startY, 180);
+            txtScanInput.KeyDown += TxtScanInput_KeyDown;
+            txtScanInput.Enter += (s, e) => txtScanInput.SelectAll();
+            leftPanel.Controls.Add(txtScanInput);
+
 
             // Status label
             startY += rowHeight + 12;
@@ -359,6 +368,148 @@ namespace WindowsFormsApp1
         {
             // Optional: could disable auto-refresh for now
         }
+        // 扫码文件自动对焦
+        private void FocusScanInput()
+        {
+            if (IsDisposed || Disposing || txtScanInput == null || !IsHandleCreated || !txtScanInput.CanFocus)
+                return;
+
+            BeginInvoke(new Action(() =>
+            {
+                if (IsDisposed || Disposing || txtScanInput == null || !IsHandleCreated || !txtScanInput.CanFocus)
+                    return;
+
+                txtScanInput.Focus();
+                txtScanInput.SelectionStart = txtScanInput.TextLength;
+                txtScanInput.SelectionLength = 0;
+            }));
+        }
+        // 向一个图片文件列表添加文件时去重以及校验
+        private bool AppendImageFileIfMissing(string path)
+        {
+            if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
+                return false;
+
+            string fullPath = Path.GetFullPath(path);
+            if (currentImageFiles.Any(existing => string.Equals(Path.GetFullPath(existing), fullPath, StringComparison.OrdinalIgnoreCase)))
+                return false;
+
+            currentImageFiles.Add(fullPath);
+            return true;
+        }
+
+        private static string NormalizeScanToken(string token)
+        {
+            string normalized = (token ?? string.Empty).Replace("\r", string.Empty).Replace("\n", string.Empty).Trim();
+            return normalized.Trim('"');
+        }
+        // 尝试解析扫码文件名，返回匹配的文件路径或错误信息
+        private bool TryResolveScannedFile(string token, out string matchedPath, out string errorMessage)
+        {
+            matchedPath = null;
+            errorMessage = null;
+
+            string normalizedToken = NormalizeScanToken(token);
+            if (string.IsNullOrWhiteSpace(normalizedToken))
+            {
+                errorMessage = "请输入扫码文件名";
+                return false;
+            }
+
+            string sourceFolder = txtSourceFolder.Text?.Trim();
+            if (string.IsNullOrWhiteSpace(sourceFolder) || !Directory.Exists(sourceFolder))
+            {
+                errorMessage = "请先选择有效的源目录";
+                return false;
+            }
+
+            List<string> files = LayoutOutputHelper.GetImageFiles(sourceFolder);
+            if (files.Count == 0)
+            {
+                errorMessage = "源目录中未找到可用图片";
+                return false;
+            }
+
+            string scannedFileName = Path.GetFileName(normalizedToken);
+            string scannedBaseName = Path.GetFileNameWithoutExtension(scannedFileName);
+            bool hasExtension = !string.IsNullOrWhiteSpace(Path.GetExtension(scannedFileName));
+
+            List<string> exactMatches = files
+                .Where(path => string.Equals(Path.GetFileName(path), scannedFileName, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+
+            if (exactMatches.Count == 1)
+            {
+                matchedPath = exactMatches[0];
+                return true;
+            }
+
+            if (exactMatches.Count > 1)
+            {
+                errorMessage = $"匹配到多个同名文件: {scannedFileName}";
+                return false;
+            }
+
+            if (hasExtension)
+            {
+                errorMessage = $"未找到匹配图片: {scannedFileName}";
+                return false;
+            }
+
+            List<string> baseMatches = files
+                .Where(path => string.Equals(Path.GetFileNameWithoutExtension(path), scannedBaseName, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+
+            if (baseMatches.Count == 1)
+            {
+                matchedPath = baseMatches[0];
+                return true;
+            }
+
+            if (baseMatches.Count > 1)
+            {
+                errorMessage = $"匹配到多个同名不同扩展文件: {scannedBaseName}";
+                return false;
+            }
+
+            errorMessage = $"未找到匹配图片: {normalizedToken}";
+            return false;
+        }
+
+        // 监听到enter后载入
+        private void TxtScanInput_KeyDown(object sender, KeyEventArgs e)
+        {
+            if (e.KeyCode != Keys.Enter)
+                return;
+
+            e.SuppressKeyPress = true;
+            if (isRunning)
+                return;
+
+            string scanToken = txtScanInput.Text;
+            if (!TryResolveScannedFile(scanToken, out string matchedPath, out string errorMessage))
+            {
+                lblStatus.Text = errorMessage;
+                txtScanInput.SelectAll();
+                txtScanInput.Clear();
+                FocusScanInput();
+                return;
+            }
+
+            if (AppendImageFileIfMissing(matchedPath))
+            {
+                lblStatus.Text = $"已载入: {Path.GetFileName(matchedPath)}";
+                txtScanInput.Clear();
+                RefreshPreview("loaded");
+                FocusScanInput();
+                return;
+            }
+
+            lblStatus.Text = $"已存在，已忽略: {Path.GetFileName(matchedPath)}";
+            txtScanInput.Clear();
+            FocusScanInput();
+        }
+
         // 手动载入tiff
         private void LoadTiffButton_Click(object sender, EventArgs e)
         {
@@ -382,18 +533,26 @@ namespace WindowsFormsApp1
                 {
                     lblStatus.Text = "未选择有效 TIFF 文件";
                     RenderEmptyPreview("未选择有效 TIFF 文件");
+                    FocusScanInput();
                     return;
                 }
 
+                bool changed = false;
                 foreach (string selectedFile in selectedFiles)
                 {
-                    if (!currentImageFiles.Any(existing => string.Equals(existing, selectedFile, StringComparison.OrdinalIgnoreCase)))
-                    {
-                        currentImageFiles.Add(selectedFile);
-                    }
+                    changed |= AppendImageFileIfMissing(selectedFile);
                 }
 
-                RefreshPreview("loaded");
+                if (changed)
+                {
+                    RefreshPreview("loaded");
+                    FocusScanInput();
+                }
+                else
+                {
+                    lblStatus.Text = "所选文件已存在";
+                    FocusScanInput();
+                }
             }
         }
 
@@ -462,11 +621,13 @@ namespace WindowsFormsApp1
 
 
                 lblStatus.Text = "预览已刷新";
+                FocusScanInput();
             }
             catch (Exception ex)
             {
                 RenderEmptyPreview($"预览失败: {ex.Message}");
                 lblStatus.Text = "预览失败";
+                FocusScanInput();
             }
         }
 
@@ -792,7 +953,6 @@ namespace WindowsFormsApp1
                 ShowWarning("请选择有效的大图输出目录");
                 return null;
             }
-
             decimal sheetWidth, sheetHeight, dpi, startX, startY, slotWidth, slotHeight, hGap, vGap;
             int rows, columns;
 
@@ -905,6 +1065,8 @@ namespace WindowsFormsApp1
             btnClose.Enabled = !busy;
             btnPreviewAll.Enabled = !busy;
             loadTiffButton.Enabled = !busy;
+            if (txtScanInput != null)
+                txtScanInput.Enabled = !busy;
             btnRun.Text = busy ? "处理中..." : "开始排版输出";
         }
 
