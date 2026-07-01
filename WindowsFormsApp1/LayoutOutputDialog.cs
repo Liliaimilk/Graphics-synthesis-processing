@@ -5,6 +5,7 @@ using System.Drawing.Drawing2D;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 using Bitmap = System.Drawing.Bitmap;
@@ -476,6 +477,32 @@ namespace WindowsFormsApp1
             return false;
         }
 
+        // 从扫码输入中提取文件名/物料名称
+        // 支持纯字符串和 JSON 对象两种格式
+        private string ExtractNameFromScanInput(string rawInput)
+        {
+            // 如果输入以 { 开头，尝试解析为 JSON 对象
+            if (rawInput.StartsWith("{"))
+            {
+                // 按优先级尝试常见字段名
+                foreach (var field in new[] { "materialName", "name", "filename", "fileName", "code", "material", "itemName" })
+                {
+                    // 匹配 "fieldName":"value" 或 "fieldName": "value"
+                    var match = Regex.Match(rawInput, $@"""{field}"":\s*""([^""]+)""", RegexOptions.IgnoreCase);
+                    if (match.Success)
+                    {
+                        var val = match.Groups[1].Value.Trim();
+                        if (!string.IsNullOrWhiteSpace(val))
+                            return val;
+                    }
+                }
+                lblStatus.Text = "JSON 中未找到支持的名称字段";
+            }
+
+            // 默认：直接返回原始输入作为文件名
+            return rawInput;
+        }
+
         // 监听到enter后载入
         private void TxtScanInput_KeyDown(object sender, KeyEventArgs e)
         {
@@ -486,7 +513,16 @@ namespace WindowsFormsApp1
             if (isRunning)
                 return;
 
-            string scanToken = txtScanInput.Text;
+            string rawInput = txtScanInput.Text.Trim();
+            if (string.IsNullOrEmpty(rawInput))
+            {
+                FocusScanInput();
+                return;
+            }
+
+            // 优先尝试从 JSON 对象中提取名称
+            string scanToken = ExtractNameFromScanInput(rawInput);
+
             if (!TryResolveScannedFile(scanToken, out string matchedPath, out string errorMessage))
             {
                 lblStatus.Text = errorMessage;
