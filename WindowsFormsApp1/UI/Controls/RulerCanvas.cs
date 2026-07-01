@@ -44,6 +44,11 @@ namespace WindowsFormsApp1
         private Bitmap _checkerboard;
         private readonly HScrollBar _hScroll;
         private readonly VScrollBar _vScroll;
+        private readonly ContextMenuStrip _imageContextMenu;
+        private readonly ContextMenuStrip _canvasContextMenu;
+        private readonly ToolStripMenuItem _deleteImageMenuItem;
+        private readonly ToolStripMenuItem _clearCanvasMenuItem;
+        private readonly ToolStripMenuItem _resetViewMenuItem;
         private static bool _magickInitialized;
 
         private float _zoom = 1f;
@@ -78,6 +83,22 @@ namespace WindowsFormsApp1
             _vScroll = new VScrollBar { TabStop = false };
             Controls.Add(_vScroll);
             _vScroll.ValueChanged += VScroll_ValueChanged;
+
+            _deleteImageMenuItem = new ToolStripMenuItem("删除选中图片");
+            _deleteImageMenuItem.Click += DeleteImageMenuItem_Click;
+
+            _imageContextMenu = new ContextMenuStrip();
+            _imageContextMenu.Items.Add(_deleteImageMenuItem);
+
+            _clearCanvasMenuItem = new ToolStripMenuItem("清空画布");
+            _clearCanvasMenuItem.Click += ClearCanvasMenuItem_Click;
+
+            _resetViewMenuItem = new ToolStripMenuItem("重置视图");
+            _resetViewMenuItem.Click += ResetViewMenuItem_Click;
+
+            _canvasContextMenu = new ContextMenuStrip();
+            _canvasContextMenu.Items.Add(_clearCanvasMenuItem);
+            _canvasContextMenu.Items.Add(_resetViewMenuItem);
         }
 
         public void SetBackgroundStyle(BackgroundStyle style)
@@ -375,7 +396,10 @@ namespace WindowsFormsApp1
                 if (e.Button == MouseButtons.Right && e.Clicks == 2)
                 {
                     ResetView();
+                    return;
                 }
+
+                HandleRightClick(e);
                 return;
             }
 
@@ -518,6 +542,89 @@ namespace WindowsFormsApp1
                     _vScroll.Value = target;
                 }
             }
+        }
+
+        /// <summary>
+        /// 处理画布图片的右键菜单逻辑。
+        /// </summary>
+        private void HandleRightClick(MouseEventArgs e)
+        {
+            CanvasImageItem hitImage = HitTestImage(e.Location);
+            if (hitImage == null)
+            {
+                SelectImage(null, false);
+                _imageContextMenu.Close();
+                _clearCanvasMenuItem.Enabled = _images.Count > 0;
+                _resetViewMenuItem.Enabled = _images.Count > 0;
+                Invalidate();
+                _canvasContextMenu.Show(this, e.Location);
+                return;
+            }
+
+            _canvasContextMenu.Close();
+            SelectImage(hitImage, true);
+            _deleteImageMenuItem.Enabled = _selectedImage != null;
+            Invalidate();
+            _imageContextMenu.Show(this, e.Location);
+        }
+
+        /// <summary>
+        /// 删除当前选中的图片，并同步刷新画布状态。
+        /// </summary>
+        private void DeleteSelectedImage()
+        {
+            if (_selectedImage == null)
+            {
+                return;
+            }
+
+            CanvasImageItem imageToRemove = _selectedImage;
+            int removedIndex = _images.IndexOf(imageToRemove);
+
+            _images.Remove(imageToRemove);
+            _selectedImage = null;
+            imageToRemove.Image.Dispose();
+
+            if (_images.Count == 0)
+            {
+                _zoom = 1f;
+                _panOffset = PointF.Empty;
+                _hScroll.Visible = false;
+                _vScroll.Visible = false;
+                ZoomChanged?.Invoke(_zoom);
+                Invalidate();
+                return;
+            }
+
+            int nextIndex = Math.Min(removedIndex, _images.Count - 1);
+            SelectImage(_images[nextIndex], false);
+            ClampPanOffset();
+            UpdateScrollBars();
+            Invalidate();
+        }
+
+        /// <summary>
+        /// 响应右键菜单中的删除操作。
+        /// </summary>
+        private void DeleteImageMenuItem_Click(object sender, EventArgs e)
+        {
+            DeleteSelectedImage();
+        }
+
+        /// <summary>
+        /// 响应空白区域菜单中的清空画布操作。
+        /// </summary>
+        private void ClearCanvasMenuItem_Click(object sender, EventArgs e)
+        {
+            ClearScene();
+        }
+
+        /// <summary>
+        /// 响应空白区域菜单中的重置视图操作。
+        /// </summary>
+        private void ResetViewMenuItem_Click(object sender, EventArgs e)
+        {
+            ResetView();
         }
 
         private void UpdateScrollBars()
