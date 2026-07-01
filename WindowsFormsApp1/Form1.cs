@@ -690,10 +690,13 @@ namespace WindowsFormsApp1
                 lblStatus.Text = "加载图片...";
                 Application.DoEvents();
 
-                canvas.ClearScene();
-                foreach (string path in validPaths)
+                if (validPaths.Count == 1)
                 {
-                    canvas.LoadImageFromFile(path);
+                    canvas.LoadImageFromFile(validPaths[0]);
+                }
+                else
+                {
+                    canvas.LoadImagesHorizontally(validPaths);
                 }
 
                 lblStatus.Text = validPaths.Count == 1 ? "完成！" : $"已加载 {validPaths.Count} 张图片";
@@ -1573,6 +1576,12 @@ namespace WindowsFormsApp1
                 if (control != null)
                 {
                     channelControls.Remove(control);
+                    // 重置通道计数
+                    if(channelControls.Count == 0)
+                    {
+                        nextChannelNumber = 1;
+                    }   
+                    
                 }
 
                 RefreshChannelNames();

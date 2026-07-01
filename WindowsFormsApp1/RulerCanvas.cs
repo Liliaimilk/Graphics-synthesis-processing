@@ -256,6 +256,41 @@ namespace WindowsFormsApp1
                 MessageBox.Show($"无法加载图片: {ex.Message}", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }
+        // 水平加载多张图片
+        public void LoadImagesHorizontally(IEnumerable<string> filePaths)
+        {
+            List<string> paths = (filePaths ?? Enumerable.Empty<string>())
+                .Where(path => !string.IsNullOrWhiteSpace(path))
+                .ToList();
+
+            if (paths.Count == 0)
+            {
+                ClearScene();
+                return;
+            }
+
+            List<Bitmap> loadedBitmaps = new List<Bitmap>();
+            try
+            {
+                foreach (string path in paths)
+                {
+                    loadedBitmaps.Add(LoadBitmapFromFile(path));
+                }
+
+                ClearScene();
+                AddImagesHorizontally(loadedBitmaps);
+                loadedBitmaps.Clear();
+            }
+            catch (Exception ex)
+            {
+                foreach (Bitmap bitmap in loadedBitmaps)
+                {
+                    bitmap.Dispose();
+                }
+
+                throw new InvalidOperationException($"无法加载图片: {ex.Message}", ex);
+            }
+        }
 
         protected override void OnPaint(PaintEventArgs e)
         {
@@ -936,6 +971,32 @@ namespace WindowsFormsApp1
             }
 
             return bounds;
+        }
+
+        private void AddImagesHorizontally(IReadOnlyList<Bitmap> bitmaps)
+        {
+            if (bitmaps == null || bitmaps.Count == 0)
+            {
+                return;
+            }
+
+            float averageWidth = (float)bitmaps.Average(bitmap => bitmap.Width);
+            float spacing = Math.Max(24f, averageWidth * 0.08f);
+            float currentX = 0f;
+            float maxHeight = bitmaps.Max(bitmap => (float)bitmap.Height);
+
+            foreach (Bitmap bitmap in bitmaps)
+            {
+                float y = (maxHeight - bitmap.Height) / 2f;
+                CanvasImageItem item = new CanvasImageItem(bitmap, new PointF(currentX, y));
+                _images.Add(item);
+                currentX += bitmap.Width + spacing;
+            }
+
+            SelectImage(_images[_images.Count - 1], true);
+            FitSceneToViewport();
+            UpdateScrollBars();
+            Invalidate();
         }
 
         private PointF GetDefaultImageLocation(Size imageSize)
