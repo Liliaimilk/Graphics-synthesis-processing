@@ -960,9 +960,8 @@ namespace WindowsFormsApp1
 
         private void SelectCompositeMode(string compositeMode)
         {
-            string normalized = (compositeMode ?? string.Empty).Trim().ToLowerInvariant();
-            bool isFullBleed = normalized.Contains("满版") || normalized.Contains("fullbleed") || normalized.Contains("full_bleed") || normalized.Contains("full-bleed");
-            cmbCompositeMode.SelectedIndex = isFullBleed ? 1 : 0;
+            if (cmbCompositeMode != null && cmbCompositeMode.Items.Count > 1)
+                cmbCompositeMode.SelectedIndex = 1;
         }
 
         private void ShowStatusMessage(string statusText, string dialogMessage, string title, MessageBoxIcon icon)
@@ -1110,10 +1109,8 @@ namespace WindowsFormsApp1
         private BuildJobsResult BuildJobsCore(string templateFile, List<string> materialFiles, bool isBatchMode, string format, string rotation = null, string mirror = null)
         {
             string separator = string.IsNullOrWhiteSpace(txtSeparator.Text) ? "-" : txtSeparator.Text;
-            TemplateCompositeMode compositeMode = cmbCompositeMode.SelectedIndex == 1
-                ? TemplateCompositeMode.FullBleed
-                : TemplateCompositeMode.Standard;
-            string compositeModeName = cmbCompositeMode.SelectedItem?.ToString() ?? "套图标准模式";
+            TemplateCompositeMode compositeMode = TemplateCompositeMode.FullBleed;
+            string compositeModeName = "满版模式";
             string exclusionMaskPath = null;
             string ext = GetOutputExtension(format);
 
@@ -1196,18 +1193,18 @@ namespace WindowsFormsApp1
             cmbFormat.Items.AddRange(new object[] { "TIF", "PSD", "JPEG", "PNG" });
             cmbFormat.SelectedIndex = 0;
 
-            var lblMode = CreateLabel("模式:", startX + 290, startY, 40);
-            cmbCompositeMode = CreateComboBox(startX + 335, startY, 110);
+            var lblMode = CreateLabel("模式:", startX + 590, startY, 40);
+            cmbCompositeMode = CreateComboBox(startX + 635, startY, 80);
             cmbCompositeMode.Items.AddRange(new object[] { "套图标准模式", "满版模式" });
-            cmbCompositeMode.SelectedIndex = 0;
+            cmbCompositeMode.SelectedIndex = 1;
 
             var lblRotation = CreateLabel("旋转:", startX + 460, startY, 40);
             cmbRotation = CreateComboBox(startX + 505, startY, 80);
             cmbRotation.Items.AddRange(new object[] { "0°", "90°", "180°", "270°" });
             cmbRotation.SelectedIndex = 0;
 
-            var lblMirror = CreateLabel("镜像:", startX + 590, startY, 40);
-            cmbMirror = CreateComboBox(startX + 635, startY, 80);
+            var lblMirror = CreateLabel("镜像:", startX + 290, startY, 40);
+            cmbMirror = CreateComboBox(startX + 335, startY, 110);
             cmbMirror.Items.AddRange(new object[] { "无", "水平", "垂直", "水平+垂直" });
             cmbMirror.SelectedIndex = 0;
 
@@ -1414,7 +1411,6 @@ namespace WindowsFormsApp1
                 lblSave, txtSavePath, btnBrowseSave,
                 lblSeparator, txtSeparator,
                 lblFormat, cmbFormat,
-                lblMode, cmbCompositeMode,
                 lblRotation, cmbRotation,
                 lblMirror, cmbMirror,
                 channelSectionLabel, addChannels, channelListPanel,
@@ -2019,7 +2015,6 @@ namespace WindowsFormsApp1
             txtSavePath.Enabled = !busy;
             txtSeparator.Enabled = !busy;
             cmbFormat.Enabled = !busy;
-            cmbCompositeMode.Enabled = !busy;
             // chkWhiteInk.Enabled = !busy;
             // chkVarnish.Enabled = !busy;
             chkBatchMode.Enabled = !busy;
