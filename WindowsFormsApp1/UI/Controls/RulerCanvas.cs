@@ -15,6 +15,33 @@ namespace WindowsFormsApp1
 
     public class RulerCanvas : Control
     {
+        private sealed class BlueHoverMenuColorTable : ProfessionalColorTable
+        {
+            public override Color MenuItemSelected => Color.FromArgb(0, 120, 215);
+            public override Color MenuItemSelectedGradientBegin => Color.FromArgb(0, 120, 215);
+            public override Color MenuItemSelectedGradientEnd => Color.FromArgb(0, 120, 215);
+            public override Color MenuItemPressedGradientBegin => SystemColors.Control;
+            public override Color MenuItemPressedGradientMiddle => SystemColors.Control;
+            public override Color MenuItemPressedGradientEnd => SystemColors.Control;
+            public override Color ToolStripDropDownBackground => SystemColors.Control;
+            public override Color ImageMarginGradientBegin => SystemColors.Control;
+            public override Color ImageMarginGradientMiddle => SystemColors.Control;
+            public override Color ImageMarginGradientEnd => SystemColors.Control;
+        }
+
+        private sealed class BlueHoverMenuRenderer : ToolStripProfessionalRenderer
+        {
+            public BlueHoverMenuRenderer() : base(new BlueHoverMenuColorTable())
+            {
+            }
+
+            protected override void OnRenderItemText(ToolStripItemTextRenderEventArgs e)
+            {
+                e.TextColor = e.Item.Selected ? Color.White : Color.Black;
+                base.OnRenderItemText(e);
+            }
+        }
+
         private sealed class CanvasImageItem
         {
             public CanvasImageItem(Bitmap image, PointF worldLocation)
@@ -99,6 +126,9 @@ namespace WindowsFormsApp1
             _canvasContextMenu = new ContextMenuStrip();
             _canvasContextMenu.Items.Add(_clearCanvasMenuItem);
             _canvasContextMenu.Items.Add(_resetViewMenuItem);
+
+            ApplyMenuStyle(_imageContextMenu);
+            ApplyMenuStyle(_canvasContextMenu);
         }
 
         public void SetBackgroundStyle(BackgroundStyle style)
@@ -108,6 +138,29 @@ namespace WindowsFormsApp1
         }
 
         public BackgroundStyle GetBackgroundStyle() => _bgStyle;
+
+        /// <summary>
+        /// 应用菜单样式，保留默认背景并将悬停高亮改为蓝色。
+        /// </summary>
+        private static void ApplyMenuStyle(ContextMenuStrip menu)
+        {
+            if (menu == null)
+            {
+                return;
+            }
+
+            menu.RenderMode = ToolStripRenderMode.Professional;
+            menu.Renderer = new BlueHoverMenuRenderer();
+            menu.BackColor = SystemColors.Control;
+            menu.ForeColor = Color.Black;
+            menu.ShowImageMargin = false;
+
+            foreach (ToolStripItem item in menu.Items)
+            {
+                item.BackColor = menu.BackColor;
+                item.ForeColor = Color.Black;
+            }
+        }
 
         public CanvasTool ActiveTool
         {
