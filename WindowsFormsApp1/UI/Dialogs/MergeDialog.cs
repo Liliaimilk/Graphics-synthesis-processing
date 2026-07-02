@@ -1306,6 +1306,10 @@ namespace WindowsFormsApp1
             btnMerge.Enabled = !busy;
             btnPauseResume.Enabled = busy && chkBatchMode.Checked;
             btnCancel.Enabled = busy && chkBatchMode.Checked;
+            cmbRotation.Enabled = !busy;
+            cmbMirror.Enabled = !busy;
+            addChannels.Enabled = !busy;
+
             btnPauseResume.Text = "暂停";
 
             if (busy)

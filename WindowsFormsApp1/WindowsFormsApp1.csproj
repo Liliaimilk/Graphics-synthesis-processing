@@ -108,9 +108,7 @@
     </Compile>
     <Compile Include="Program.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
-    <Compile Include="UI\Controls\RulerCanvas.cs">
-      <SubType>Component</SubType>
-    </Compile>
+    <Compile Include="UI\Controls\RulerCanvas.cs" />
     <Compile Include="UI\Controls\RulerControl.cs">
       <SubType>Component</SubType>
     </Compile>
