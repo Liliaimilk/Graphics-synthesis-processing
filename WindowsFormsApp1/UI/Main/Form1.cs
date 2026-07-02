@@ -85,6 +85,7 @@ namespace WindowsFormsApp1
         private Label lblZoom;
         private Label lblSelectionTitle;
         private Label lblSelectionHint;
+        private Label lblSelectionSummary;
         private Label lblSelectedWidthPx;
         private Label lblSelectedHeightPx;
         private Label lblSelectedWidthMm;
@@ -252,7 +253,7 @@ namespace WindowsFormsApp1
             };
             contentLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 52F));
             contentLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
-            contentLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 280F));
+            contentLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 320F));
             contentLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
             workspacePanel.Controls.Add(contentLayout);
 
@@ -315,14 +316,14 @@ namespace WindowsFormsApp1
             {
                 Dock = DockStyle.Fill,
                 BackColor = Color.FromArgb(33, 43, 63),
-                Padding = new Padding(16, 18, 16, 18)
+                Padding = new Padding(12, 14, 12, 14)
             };
 
             lblSelectionTitle = new Label
             {
                 Text = "选中图片信息",
                 Dock = DockStyle.Top,
-                Height = 30,
+                Height = 28,
                 Font = new Font("微软雅黑", 12F, FontStyle.Bold),
                 ForeColor = Color.FromArgb(235, 238, 245),
                 TextAlign = ContentAlignment.MiddleLeft
@@ -333,49 +334,154 @@ namespace WindowsFormsApp1
             {
                 Text = "点击画布中的图片后，这里会显示当前图片的宽高尺寸。",
                 Dock = DockStyle.Top,
-                Height = 54,
+                Height = 42,
                 Font = new Font("微软雅黑", 9F),
                 ForeColor = Color.FromArgb(170, 178, 190),
-                Padding = new Padding(0, 6, 0, 10)
+                Padding = new Padding(0, 4, 0, 8)
             };
             rightInfoPanel.Controls.Add(lblSelectionHint);
 
-            Panel infoCard = new Panel
+            Panel summaryCard = new Panel
             {
                 Dock = DockStyle.Top,
-                Height = 226,
+                Height = 90,
                 BackColor = Color.FromArgb(41, 53, 77),
-                Padding = new Padding(14)
+                Padding = new Padding(14, 12, 14, 12),
+                Margin = new Padding(0, 0, 0, 12)
             };
-            rightInfoPanel.Controls.Add(infoCard);
+            rightInfoPanel.Controls.Add(summaryCard);
 
-            lblSelectedWidthPx = CreateSelectionInfoLabel("宽度(px): 未选择");
-            lblSelectedHeightPx = CreateSelectionInfoLabel("高度(px): 未选择");
-            lblSelectedWidthMm = CreateSelectionInfoLabel("宽度(mm): 未选择");
-            lblSelectedHeightMm = CreateSelectionInfoLabel("高度(mm): 未选择");
-            lblSelectedDpi = CreateSelectionInfoLabel("DPI: 未选择");
+            Label summaryTitle = new Label
+            {
+                Text = "当前选中",
+                Dock = DockStyle.Top,
+                Height = 24,
+                Font = new Font("微软雅黑", 10.5F, FontStyle.Bold),
+                ForeColor = Color.FromArgb(240, 243, 248)
+            };
+            summaryCard.Controls.Add(summaryTitle);
 
-            infoCard.Controls.Add(lblSelectedDpi);
-            infoCard.Controls.Add(lblSelectedHeightMm);
-            infoCard.Controls.Add(lblSelectedWidthMm);
-            infoCard.Controls.Add(lblSelectedHeightPx);
-            infoCard.Controls.Add(lblSelectedWidthPx);
+            lblSelectionSummary = new Label
+            {
+                Text = "未选择图片",
+                Dock = DockStyle.Fill,
+                Font = new Font("微软雅黑", 9.5F),
+                ForeColor = Color.FromArgb(190, 198, 210),
+                TextAlign = ContentAlignment.MiddleLeft
+            };
+            summaryCard.Controls.Add(lblSelectionSummary);
+
+            Label sectionTitle = new Label
+            {
+                Text = "图片尺寸",
+                Dock = DockStyle.Top,
+                Height = 40,
+                Font = new Font("微软雅黑", 10F, FontStyle.Bold),
+                ForeColor = Color.FromArgb(228, 233, 240),
+                Padding = new Padding(0, 10, 0, 8)
+            };
+            rightInfoPanel.Controls.Add(sectionTitle);
+
+            TableLayoutPanel metricGrid = new TableLayoutPanel
+            {
+                Dock = DockStyle.Top,
+                Height = 210,
+                ColumnCount = 2,
+                RowCount = 3,
+                BackColor = Color.Transparent,
+                Margin = new Padding(0)
+            };
+            metricGrid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50F));
+            metricGrid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50F));
+            metricGrid.RowStyles.Add(new RowStyle(SizeType.Absolute, 66F));
+            metricGrid.RowStyles.Add(new RowStyle(SizeType.Absolute, 66F));
+            metricGrid.RowStyles.Add(new RowStyle(SizeType.Absolute, 66F));
+            rightInfoPanel.Controls.Add(metricGrid);
+
+            metricGrid.Controls.Add(CreateMetricCard("W", "px", out lblSelectedWidthPx), 0, 0);
+            metricGrid.Controls.Add(CreateMetricCard("H", "px", out lblSelectedHeightPx), 1, 0);
+            metricGrid.Controls.Add(CreateMetricCard("宽度", "mm", out lblSelectedWidthMm), 0, 1);
+            metricGrid.Controls.Add(CreateMetricCard("高度", "mm", out lblSelectedHeightMm), 1, 1);
+            metricGrid.Controls.Add(CreateWideMetricCard("DPI", out lblSelectedDpi), 0, 2);
+            metricGrid.SetColumnSpan(metricGrid.GetControlFromPosition(0, 2), 2);
+
+            rightInfoPanel.Controls.SetChildIndex(lblSelectionTitle, 0);
+            rightInfoPanel.Controls.SetChildIndex(lblSelectionHint, 1);
+            rightInfoPanel.Controls.SetChildIndex(summaryCard, 2);
+            rightInfoPanel.Controls.SetChildIndex(sectionTitle, 3);
+            rightInfoPanel.Controls.SetChildIndex(metricGrid, 4);
         }
 
         /// <summary>
-        /// 创建右侧信息面板中的单行尺寸标签。
+        /// 创建右侧信息面板中的单个指标卡片。
         /// </summary>
-        private static Label CreateSelectionInfoLabel(string text)
+        private static Panel CreateMetricCard(string title, string unit, out Label valueLabel)
         {
-            return new Label
+            Panel card = new Panel
             {
-                Text = text,
-                Dock = DockStyle.Top,
-                Height = 36,
-                Font = new Font("微软雅黑", 10F),
-                ForeColor = Color.FromArgb(225, 230, 238),
-                TextAlign = ContentAlignment.MiddleLeft
+                Dock = DockStyle.Fill,
+                BackColor = Color.FromArgb(41, 53, 77),
+                Margin = new Padding(6)
             };
+
+            Label titleLabel = new Label
+            {
+                Text = title,
+                AutoSize = false,
+                Location = new Point(12, 10),
+                Size = new Size(60, 18),
+                Font = new Font("微软雅黑", 8.5F),
+                ForeColor = Color.FromArgb(176, 186, 198)
+            };
+            card.Controls.Add(titleLabel);
+
+            valueLabel = new Label
+            {
+                Text = unit == "px" ? "-- px" : $"-- {unit}",
+                AutoSize = false,
+                Location = new Point(12, 31),
+                Size = new Size(126, 24),
+                Font = new Font("微软雅黑", 10F, FontStyle.Bold),
+                ForeColor = Color.FromArgb(239, 242, 247)
+            };
+            card.Controls.Add(valueLabel);
+            return card;
+        }
+
+        /// <summary>
+        /// 创建横向铺满的一行指标卡片。
+        /// </summary>
+        private static Panel CreateWideMetricCard(string title, out Label valueLabel)
+        {
+            Panel card = new Panel
+            {
+                Dock = DockStyle.Fill,
+                BackColor = Color.FromArgb(41, 53, 77),
+                Margin = new Padding(6)
+            };
+
+            Label titleLabel = new Label
+            {
+                Text = title,
+                AutoSize = false,
+                Location = new Point(12, 10),
+                Size = new Size(80, 18),
+                Font = new Font("微软雅黑", 8.5F),
+                ForeColor = Color.FromArgb(176, 186, 198)
+            };
+            card.Controls.Add(titleLabel);
+
+            valueLabel = new Label
+            {
+                Text = "--",
+                AutoSize = false,
+                Location = new Point(12, 31),
+                Size = new Size(240, 24),
+                Font = new Font("微软雅黑", 10F, FontStyle.Bold),
+                ForeColor = Color.FromArgb(239, 242, 247)
+            };
+            card.Controls.Add(valueLabel);
+            return card;
         }
 
         /// <summary>
@@ -398,21 +504,23 @@ namespace WindowsFormsApp1
 
             if (selectionInfo == null)
             {
-                lblSelectedWidthPx.Text = "宽度(px): 未选择";
-                lblSelectedHeightPx.Text = "高度(px): 未选择";
-                lblSelectedWidthMm.Text = "宽度(mm): 未选择";
-                lblSelectedHeightMm.Text = "高度(mm): 未选择";
-                lblSelectedDpi.Text = "DPI: 未选择";
+                lblSelectionSummary.Text = "未选择图片";
+                lblSelectedWidthPx.Text = "-- px";
+                lblSelectedHeightPx.Text = "-- px";
+                lblSelectedWidthMm.Text = "-- mm";
+                lblSelectedHeightMm.Text = "-- mm";
+                lblSelectedDpi.Text = "--";
                 return;
             }
 
-            lblSelectedWidthPx.Text = $"宽度(px): {selectionInfo.WidthPx}";
-            lblSelectedHeightPx.Text = $"高度(px): {selectionInfo.HeightPx}";
-            lblSelectedWidthMm.Text = $"宽度(mm): {selectionInfo.WidthMm:0.##}";
-            lblSelectedHeightMm.Text = $"高度(mm): {selectionInfo.HeightMm:0.##}";
+            lblSelectionSummary.Text = "已选中当前画布图片";
+            lblSelectedWidthPx.Text = $"{selectionInfo.WidthPx} px";
+            lblSelectedHeightPx.Text = $"{selectionInfo.HeightPx} px";
+            lblSelectedWidthMm.Text = $"{selectionInfo.WidthMm:0.##} mm";
+            lblSelectedHeightMm.Text = $"{selectionInfo.HeightMm:0.##} mm";
             lblSelectedDpi.Text = Math.Abs(selectionInfo.HorizontalDpi - selectionInfo.VerticalDpi) < 0.01f
-                ? $"DPI: {selectionInfo.HorizontalDpi:0.##}"
-                : $"DPI: {selectionInfo.HorizontalDpi:0.##} x {selectionInfo.VerticalDpi:0.##}";
+                ? $"{selectionInfo.HorizontalDpi:0.##}"
+                : $"{selectionInfo.HorizontalDpi:0.##} x {selectionInfo.VerticalDpi:0.##}";
         }
 
         private void SetupStatusBar()
