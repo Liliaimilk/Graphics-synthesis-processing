@@ -27,6 +27,8 @@ namespace WindowsFormsApp1
 
     public static class AsposePSDHelper
     {
+        private const float OutputDpi = 300f;
+
         private sealed class ImagePixelData
         {
             public int Width { get; }
@@ -211,6 +213,7 @@ namespace WindowsFormsApp1
             }
 
             var result = new Bitmap(source);
+            ApplyOutputResolution(result);
             result.RotateFlip(flipType);
             return result;
         }
@@ -249,6 +252,7 @@ namespace WindowsFormsApp1
             }
 
             var result = new Bitmap(source);
+            ApplyOutputResolution(result);
             result.RotateFlip(rotateType);
             return result;
         }
@@ -947,6 +951,8 @@ namespace WindowsFormsApp1
             if (bitmap == null)
                 throw new ArgumentNullException(nameof(bitmap));
 
+            ApplyOutputResolution(bitmap);
+
             switch (format.ToUpper())
             {
                 case "PSD":
@@ -996,6 +1002,7 @@ namespace WindowsFormsApp1
 
         private static void SaveAsCmykTiff(Bitmap bitmap, string outputPath)
         {
+            ApplyOutputResolution(bitmap);
             using (var ms = new MemoryStream())
             {
                 bitmap.Save(ms, ImageFormat.Png);
@@ -1006,6 +1013,7 @@ namespace WindowsFormsApp1
                     image.Alpha(AlphaOption.On);
                     image.ColorSpace = ColorSpace.CMYK;
                     image.Format = MagickFormat.Tiff;
+                    image.Density = new Density(OutputDpi, OutputDpi);
                     image.Write(outputPath);
                 }
             }
@@ -1020,6 +1028,7 @@ namespace WindowsFormsApp1
 
         private static void SaveAsCmykTiffWithExtraChannels(Bitmap bitmap, string outputPath, List<string> channelNames)
         {
+            ApplyOutputResolution(bitmap);
             int width = bitmap.Width;
             int height = bitmap.Height;
             var sourceData = ExtractPixelData(bitmap);
@@ -1236,6 +1245,13 @@ namespace WindowsFormsApp1
                 Console.WriteLine($"GeneratePreview 失败: {ex.GetType().FullName}: {ex.Message}");
                 return null;
             }
+        }
+        private static void ApplyOutputResolution(Bitmap bitmap)
+        {
+            if (bitmap == null)
+                return;
+
+            bitmap.SetResolution(OutputDpi, OutputDpi);
         }
     }
 }

@@ -13,6 +13,19 @@ namespace WindowsFormsApp1
     public enum BackgroundStyle { Checkerboard, White }
     public enum CanvasTool { None, Move }
 
+    /// <summary>
+    /// 表示当前画布选中图片的基础尺寸信息。
+    /// </summary>
+    public sealed class CanvasSelectionInfo
+    {
+        public int WidthPx { get; set; }
+        public int HeightPx { get; set; }
+        public decimal WidthMm { get; set; }
+        public decimal HeightMm { get; set; }
+        public float HorizontalDpi { get; set; }
+        public float VerticalDpi { get; set; }
+    }
+
     public class RulerCanvas : Control
     {
         private sealed class BlueHoverMenuColorTable : ProfessionalColorTable
@@ -44,15 +57,26 @@ namespace WindowsFormsApp1
 
         private sealed class CanvasImageItem
         {
-            public CanvasImageItem(Bitmap image, PointF worldLocation)
+            public CanvasImageItem(Bitmap image, PointF worldLocation, float horizontalDpi, float verticalDpi)
             {
                 Image = image;
                 WorldLocation = worldLocation;
+                HorizontalDpi = horizontalDpi;
+                VerticalDpi = verticalDpi;
             }
 
             public Bitmap Image { get; }
             public PointF WorldLocation { get; set; }
             public bool IsSelected { get; set; }
+            public float HorizontalDpi { get; }
+            public float VerticalDpi { get; }
+        }
+
+        private sealed class LoadedBitmapResult
+        {
+            public Bitmap Bitmap { get; set; }
+            public float HorizontalDpi { get; set; }
+            public float VerticalDpi { get; set; }
         }
 
         private const int RULER_SIZE = 28;
@@ -91,6 +115,7 @@ namespace WindowsFormsApp1
         private CanvasTool _activeTool = CanvasTool.Move;
 
         public event Action<float> ZoomChanged;
+        public event Action<CanvasSelectionInfo> SelectedImageChanged;
 
         public RulerCanvas()
         {
@@ -183,13 +208,22 @@ namespace WindowsFormsApp1
 
         public void AddImage(Bitmap bitmap)
         {
+            AddImage(bitmap, bitmap?.HorizontalResolution ?? DPI, bitmap?.VerticalResolution ?? DPI);
+        }
+
+        private void AddImage(Bitmap bitmap, float horizontalDpi, float verticalDpi)
+        {
             if (bitmap == null)
             {
                 return;
             }
 
             PointF worldLocation = GetDefaultImageLocation(bitmap.Size);
-            CanvasImageItem item = new CanvasImageItem(bitmap, worldLocation);
+            CanvasImageItem item = new CanvasImageItem(
+                bitmap,
+                worldLocation,
+                NormalizeResolution(horizontalDpi),
+                NormalizeResolution(verticalDpi));
             _images.Add(item);
             SelectImage(item, true);
 
@@ -220,6 +254,7 @@ namespace WindowsFormsApp1
             _hScroll.Visible = false;
             _vScroll.Visible = false;
             ZoomChanged?.Invoke(_zoom);
+            RaiseSelectedImageChanged();
             Invalidate();
         }
 
@@ -293,7 +328,7 @@ namespace WindowsFormsApp1
                 return;
             }
 
-            List<Bitmap> loadedBitmaps = new List<Bitmap>();
+            List<LoadedBitmapResult> loadedBitmaps = new List<LoadedBitmapResult>();
             try
             {
                 foreach (string file in imageFiles)
@@ -301,18 +336,18 @@ namespace WindowsFormsApp1
                     loadedBitmaps.Add(LoadBitmapFromFile(file));
                 }
 
-                foreach (Bitmap bmp in loadedBitmaps)
+                foreach (LoadedBitmapResult bmp in loadedBitmaps)
                 {
-                    AddImage(bmp);
+                    AddImage(bmp.Bitmap, bmp.HorizontalDpi, bmp.VerticalDpi);
                 }
 
                 loadedBitmaps.Clear();
             }
             catch (Exception ex)
             {
-                foreach (Bitmap bmp in loadedBitmaps)
+                foreach (LoadedBitmapResult bmp in loadedBitmaps)
                 {
-                    bmp.Dispose();
+                    bmp.Bitmap?.Dispose();
                 }
 
                 MessageBox.Show($"无法加载图片: {ex.Message}", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
@@ -323,7 +358,8 @@ namespace WindowsFormsApp1
         {
             try
             {
-                AddImage(LoadBitmapFromFile(filePath));
+                LoadedBitmapResult result = LoadBitmapFromFile(filePath);
+                AddImage(result.Bitmap, result.HorizontalDpi, result.VerticalDpi);
             }
             catch (Exception ex)
             {
@@ -343,7 +379,7 @@ namespace WindowsFormsApp1
                 return;
             }
 
-            List<Bitmap> loadedBitmaps = new List<Bitmap>();
+            List<LoadedBitmapResult> loadedBitmaps = new List<LoadedBitmapResult>();
             try
             {
                 foreach (string path in paths)
@@ -357,9 +393,9 @@ namespace WindowsFormsApp1
             }
             catch (Exception ex)
             {
-                foreach (Bitmap bitmap in loadedBitmaps)
+                foreach (LoadedBitmapResult bitmap in loadedBitmaps)
                 {
-                    bitmap.Dispose();
+                    bitmap.Bitmap?.Dispose();
                 }
 
                 throw new InvalidOperationException($"无法加载图片: {ex.Message}", ex);
@@ -645,6 +681,7 @@ namespace WindowsFormsApp1
                 _hScroll.Visible = false;
                 _vScroll.Visible = false;
                 ZoomChanged?.Invoke(_zoom);
+                RaiseSelectedImageChanged();
                 Invalidate();
                 return;
             }
@@ -968,11 +1005,17 @@ namespace WindowsFormsApp1
             return ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".bmp" || ext == ".gif" || ext == ".tif" || ext == ".tiff";
         }
 
-        private Bitmap LoadBitmapFromFile(string filePath)
+        private LoadedBitmapResult LoadBitmapFromFile(string filePath)
         {
             try
             {
-                return new Bitmap(filePath);
+                Bitmap bitmap = new Bitmap(filePath);
+                return new LoadedBitmapResult
+                {
+                    Bitmap = bitmap,
+                    HorizontalDpi = NormalizeResolution(bitmap.HorizontalResolution),
+                    VerticalDpi = NormalizeResolution(bitmap.VerticalResolution)
+                };
             }
             catch (Exception gdiEx) when (IsTiffFile(filePath))
             {
@@ -1005,7 +1048,7 @@ namespace WindowsFormsApp1
             return ext == ".tif" || ext == ".tiff";
         }
 
-        private Bitmap LoadBitmapWithMagick(string filePath)
+        private LoadedBitmapResult LoadBitmapWithMagick(string filePath)
         {
             EnsureMagickNetInitialized();
 
@@ -1030,13 +1073,22 @@ namespace WindowsFormsApp1
                     using (MemoryStream ms = new MemoryStream(bytes))
                     using (Bitmap decoded = new Bitmap(ms))
                     {
-                        return new Bitmap(decoded);
+                        float horizontalDpi = NormalizeResolution((float)(flattened.Density?.X ?? DPI));
+                        float verticalDpi = NormalizeResolution((float)(flattened.Density?.Y ?? horizontalDpi));
+                        Bitmap bitmap = new Bitmap(decoded);
+                        bitmap.SetResolution(horizontalDpi, verticalDpi);
+                        return new LoadedBitmapResult
+                        {
+                            Bitmap = bitmap,
+                            HorizontalDpi = horizontalDpi,
+                            VerticalDpi = verticalDpi
+                        };
                     }
                 }
             }
         }
 
-        private Bitmap LoadBitmapWithLibTiff(string filePath)
+        private LoadedBitmapResult LoadBitmapWithLibTiff(string filePath)
         {
             using (Tiff tif = Tiff.Open(filePath, "r"))
             {
@@ -1059,6 +1111,8 @@ namespace WindowsFormsApp1
                     throw new InvalidOperationException($"TIFF 尺寸无效: {width}x{height}");
                 }
 
+                (float horizontalDpi, float verticalDpi) = ReadTiffResolution(tif);
+
                 int[] raster = new int[width * height];
                 bool ok = tif.ReadRGBAImageOriented(width, height, raster, BitMiracle.LibTiff.Classic.Orientation.TOPLEFT);
                 if (!ok)
@@ -1067,6 +1121,7 @@ namespace WindowsFormsApp1
                 }
 
                 Bitmap bitmap = new Bitmap(width, height, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+                bitmap.SetResolution(horizontalDpi, verticalDpi);
                 for (int y = 0; y < height; y++)
                 {
                     int row = y * width;
@@ -1081,7 +1136,12 @@ namespace WindowsFormsApp1
                     }
                 }
 
-                return bitmap;
+                return new LoadedBitmapResult
+                {
+                    Bitmap = bitmap,
+                    HorizontalDpi = horizontalDpi,
+                    VerticalDpi = verticalDpi
+                };
             }
         }
 
@@ -1133,24 +1193,28 @@ namespace WindowsFormsApp1
             return bounds;
         }
 
-        private void AddImagesHorizontally(IReadOnlyList<Bitmap> bitmaps)
+        private void AddImagesHorizontally(IReadOnlyList<LoadedBitmapResult> bitmaps)
         {
             if (bitmaps == null || bitmaps.Count == 0)
             {
                 return;
             }
 
-            float averageWidth = (float)bitmaps.Average(bitmap => bitmap.Width);
+            float averageWidth = (float)bitmaps.Average(bitmap => bitmap.Bitmap.Width);
             float spacing = Math.Max(24f, averageWidth * 0.08f);
             float currentX = 0f;
-            float maxHeight = bitmaps.Max(bitmap => (float)bitmap.Height);
+            float maxHeight = bitmaps.Max(bitmap => (float)bitmap.Bitmap.Height);
 
-            foreach (Bitmap bitmap in bitmaps)
+            foreach (LoadedBitmapResult bitmap in bitmaps)
             {
-                float y = (maxHeight - bitmap.Height) / 2f;
-                CanvasImageItem item = new CanvasImageItem(bitmap, new PointF(currentX, y));
+                float y = (maxHeight - bitmap.Bitmap.Height) / 2f;
+                CanvasImageItem item = new CanvasImageItem(
+                    bitmap.Bitmap,
+                    new PointF(currentX, y),
+                    NormalizeResolution(bitmap.HorizontalDpi),
+                    NormalizeResolution(bitmap.VerticalDpi));
                 _images.Add(item);
-                currentX += bitmap.Width + spacing;
+                currentX += bitmap.Bitmap.Width + spacing;
             }
 
             SelectImage(_images[_images.Count - 1], true);
@@ -1229,6 +1293,27 @@ namespace WindowsFormsApp1
                     _images.Add(_selectedImage);
                 }
             }
+
+            RaiseSelectedImageChanged();
+        }
+
+        private void RaiseSelectedImageChanged()
+        {
+            if (_selectedImage?.Image == null)
+            {
+                SelectedImageChanged?.Invoke(null);
+                return;
+            }
+
+            SelectedImageChanged?.Invoke(new CanvasSelectionInfo
+            {
+                WidthPx = _selectedImage.Image.Width,
+                HeightPx = _selectedImage.Image.Height,
+                WidthMm = Math.Round((decimal)_selectedImage.Image.Width / (decimal)NormalizeResolution(_selectedImage.HorizontalDpi) * 25.4m, 2),
+                HeightMm = Math.Round((decimal)_selectedImage.Image.Height / (decimal)NormalizeResolution(_selectedImage.VerticalDpi) * 25.4m, 2),
+                HorizontalDpi = NormalizeResolution(_selectedImage.HorizontalDpi),
+                VerticalDpi = NormalizeResolution(_selectedImage.VerticalDpi)
+            });
         }
 
         private void FitSceneToViewport()
@@ -1387,6 +1472,52 @@ namespace WindowsFormsApp1
                 float localX = screenPoint.X - viewportBounds.Left;
                 guide.Position = Math.Max(0f, Math.Min(1f, viewportBounds.Width <= 0 ? 0f : localX / viewportBounds.Width));
             }
+        }
+
+        private (float HorizontalDpi, float VerticalDpi) ReadTiffResolution(Tiff tif)
+        {
+            float horizontalDpi = ReadTiffResolutionValue(tif, TiffTag.XRESOLUTION);
+            float verticalDpi = ReadTiffResolutionValue(tif, TiffTag.YRESOLUTION);
+            FieldValue[] resolutionUnitField = tif.GetField(TiffTag.RESOLUTIONUNIT);
+            short resolutionUnit = resolutionUnitField != null && resolutionUnitField.Length > 0
+                ? resolutionUnitField[0].ToShort()
+                : (short)ResUnit.INCH;
+
+            if (resolutionUnit == (short)ResUnit.CENTIMETER)
+            {
+                horizontalDpi *= 2.54f;
+                verticalDpi *= 2.54f;
+            }
+
+            return (NormalizeResolution(horizontalDpi), NormalizeResolution(verticalDpi));
+        }
+
+        private float ReadTiffResolutionValue(Tiff tif, TiffTag tag)
+        {
+            FieldValue[] field = tif.GetField(tag);
+            if (field == null || field.Length == 0)
+            {
+                return DPI;
+            }
+
+            try
+            {
+                return field[0].ToFloat();
+            }
+            catch
+            {
+                return DPI;
+            }
+        }
+
+        private float NormalizeResolution(float resolution)
+        {
+            if (float.IsNaN(resolution) || float.IsInfinity(resolution) || resolution <= 1f)
+            {
+                return DPI;
+            }
+
+            return resolution;
         }
     }
 }

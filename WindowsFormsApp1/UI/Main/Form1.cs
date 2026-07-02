@@ -80,8 +80,16 @@ namespace WindowsFormsApp1
         private RulerCanvas canvas;
         private Panel workspacePanel;
         private Panel leftToolPanel;
+        private Panel rightInfoPanel;
         private Label lblStatus;
         private Label lblZoom;
+        private Label lblSelectionTitle;
+        private Label lblSelectionHint;
+        private Label lblSelectedWidthPx;
+        private Label lblSelectedHeightPx;
+        private Label lblSelectedWidthMm;
+        private Label lblSelectedHeightMm;
+        private Label lblSelectedDpi;
         private Button btnMergeTool;
         private Button btnLayoutOutputTool;
         private Button btnMoveTool;
@@ -117,8 +125,8 @@ namespace WindowsFormsApp1
         private void SetupDarkTheme()
         {
             this.Text = "图片处理工具";
-            this.Size = new Size(1280, 800);
-            this.MinimumSize = new Size(1024, 700);
+            this.Size = new Size(1560, 920);
+            this.MinimumSize = new Size(1320, 780);
             this.StartPosition = FormStartPosition.CenterScreen;
             this.BackColor = Color.FromArgb(25, 35, 55);
             this.ForeColor = Color.FromArgb(220, 225, 235);
@@ -233,22 +241,48 @@ namespace WindowsFormsApp1
 
             toolbarToolTip = new ToolTip();
 
+            TableLayoutPanel contentLayout = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                ColumnCount = 3,
+                RowCount = 1,
+                BackColor = Color.FromArgb(25, 35, 55),
+                Margin = new Padding(0),
+                Padding = new Padding(0)
+            };
+            contentLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 52F));
+            contentLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
+            contentLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 280F));
+            contentLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
+            workspacePanel.Controls.Add(contentLayout);
+
+            leftToolPanel = new Panel
+            {
+                Dock = DockStyle.Fill,
+                BackColor = Color.FromArgb(58, 58, 58),
+                Padding = new Padding(4, 8, 4, 4)
+            };
+            contentLayout.Controls.Add(leftToolPanel, 0, 0);
+
+            Panel canvasHostPanel = new Panel
+            {
+                Dock = DockStyle.Fill,
+                BackColor = Color.FromArgb(25, 35, 55),
+                Padding = new Padding(0)
+            };
+            contentLayout.Controls.Add(canvasHostPanel, 1, 0);
+
+            SetupSelectionInfoPanel();
+            contentLayout.Controls.Add(rightInfoPanel, 2, 0);
+
             canvas = new RulerCanvas
             {
                 Dock = DockStyle.Fill,
                 BackColor = Color.FromArgb(35, 40, 50),
                 ActiveTool = CanvasTool.Move
             };
-            workspacePanel.Controls.Add(canvas);
-
-            leftToolPanel = new Panel
-            {
-                Dock = DockStyle.Left,
-                Width = 52,
-                BackColor = Color.FromArgb(58, 58, 58),
-                Padding = new Padding(4, 8, 4, 4)
-            };
-            workspacePanel.Controls.Add(leftToolPanel);
+            canvasHostPanel.Controls.Add(canvas);
+            canvas.SelectedImageChanged += Canvas_SelectedImageChanged;
 
             btnMoveTool = new Button
             {
@@ -269,6 +303,116 @@ namespace WindowsFormsApp1
             leftToolPanel.Controls.Add(btnMoveTool);
 
             SetCanvasTool(CanvasTool.Move);
+            UpdateSelectionInfo(null);
+        }
+
+        /// <summary>
+        /// 初始化右侧固定信息面板，用于展示当前选中图片的尺寸信息。
+        /// </summary>
+        private void SetupSelectionInfoPanel()
+        {
+            rightInfoPanel = new Panel
+            {
+                Dock = DockStyle.Fill,
+                BackColor = Color.FromArgb(33, 43, 63),
+                Padding = new Padding(16, 18, 16, 18)
+            };
+
+            lblSelectionTitle = new Label
+            {
+                Text = "选中图片信息",
+                Dock = DockStyle.Top,
+                Height = 30,
+                Font = new Font("微软雅黑", 12F, FontStyle.Bold),
+                ForeColor = Color.FromArgb(235, 238, 245),
+                TextAlign = ContentAlignment.MiddleLeft
+            };
+            rightInfoPanel.Controls.Add(lblSelectionTitle);
+
+            lblSelectionHint = new Label
+            {
+                Text = "点击画布中的图片后，这里会显示当前图片的宽高尺寸。",
+                Dock = DockStyle.Top,
+                Height = 54,
+                Font = new Font("微软雅黑", 9F),
+                ForeColor = Color.FromArgb(170, 178, 190),
+                Padding = new Padding(0, 6, 0, 10)
+            };
+            rightInfoPanel.Controls.Add(lblSelectionHint);
+
+            Panel infoCard = new Panel
+            {
+                Dock = DockStyle.Top,
+                Height = 226,
+                BackColor = Color.FromArgb(41, 53, 77),
+                Padding = new Padding(14)
+            };
+            rightInfoPanel.Controls.Add(infoCard);
+
+            lblSelectedWidthPx = CreateSelectionInfoLabel("宽度(px): 未选择");
+            lblSelectedHeightPx = CreateSelectionInfoLabel("高度(px): 未选择");
+            lblSelectedWidthMm = CreateSelectionInfoLabel("宽度(mm): 未选择");
+            lblSelectedHeightMm = CreateSelectionInfoLabel("高度(mm): 未选择");
+            lblSelectedDpi = CreateSelectionInfoLabel("DPI: 未选择");
+
+            infoCard.Controls.Add(lblSelectedDpi);
+            infoCard.Controls.Add(lblSelectedHeightMm);
+            infoCard.Controls.Add(lblSelectedWidthMm);
+            infoCard.Controls.Add(lblSelectedHeightPx);
+            infoCard.Controls.Add(lblSelectedWidthPx);
+        }
+
+        /// <summary>
+        /// 创建右侧信息面板中的单行尺寸标签。
+        /// </summary>
+        private static Label CreateSelectionInfoLabel(string text)
+        {
+            return new Label
+            {
+                Text = text,
+                Dock = DockStyle.Top,
+                Height = 36,
+                Font = new Font("微软雅黑", 10F),
+                ForeColor = Color.FromArgb(225, 230, 238),
+                TextAlign = ContentAlignment.MiddleLeft
+            };
+        }
+
+        /// <summary>
+        /// 画布选中项变化后，同步刷新右侧信息面板。
+        /// </summary>
+        private void Canvas_SelectedImageChanged(CanvasSelectionInfo selectionInfo)
+        {
+            UpdateSelectionInfo(selectionInfo);
+        }
+
+        /// <summary>
+        /// 将选中图片的像素与毫米尺寸显示到右侧固定面板。
+        /// </summary>
+        private void UpdateSelectionInfo(CanvasSelectionInfo selectionInfo)
+        {
+            if (lblSelectedWidthPx == null)
+            {
+                return;
+            }
+
+            if (selectionInfo == null)
+            {
+                lblSelectedWidthPx.Text = "宽度(px): 未选择";
+                lblSelectedHeightPx.Text = "高度(px): 未选择";
+                lblSelectedWidthMm.Text = "宽度(mm): 未选择";
+                lblSelectedHeightMm.Text = "高度(mm): 未选择";
+                lblSelectedDpi.Text = "DPI: 未选择";
+                return;
+            }
+
+            lblSelectedWidthPx.Text = $"宽度(px): {selectionInfo.WidthPx}";
+            lblSelectedHeightPx.Text = $"高度(px): {selectionInfo.HeightPx}";
+            lblSelectedWidthMm.Text = $"宽度(mm): {selectionInfo.WidthMm:0.##}";
+            lblSelectedHeightMm.Text = $"高度(mm): {selectionInfo.HeightMm:0.##}";
+            lblSelectedDpi.Text = Math.Abs(selectionInfo.HorizontalDpi - selectionInfo.VerticalDpi) < 0.01f
+                ? $"DPI: {selectionInfo.HorizontalDpi:0.##}"
+                : $"DPI: {selectionInfo.HorizontalDpi:0.##} x {selectionInfo.VerticalDpi:0.##}";
         }
 
         private void SetupStatusBar()
