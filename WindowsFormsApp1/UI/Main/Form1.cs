@@ -328,8 +328,6 @@ namespace WindowsFormsApp1
                 ForeColor = Color.FromArgb(235, 238, 245),
                 TextAlign = ContentAlignment.MiddleLeft
             };
-            rightInfoPanel.Controls.Add(lblSelectionTitle);
-
             lblSelectionHint = new Label
             {
                 Text = "点击画布中的图片后，这里会显示当前图片的宽高尺寸。",
@@ -339,7 +337,6 @@ namespace WindowsFormsApp1
                 ForeColor = Color.FromArgb(170, 178, 190),
                 Padding = new Padding(0, 4, 0, 8)
             };
-            rightInfoPanel.Controls.Add(lblSelectionHint);
 
             Panel summaryCard = new Panel
             {
@@ -349,7 +346,6 @@ namespace WindowsFormsApp1
                 Padding = new Padding(14, 12, 14, 12),
                 Margin = new Padding(0, 0, 0, 12)
             };
-            rightInfoPanel.Controls.Add(summaryCard);
 
             Label summaryTitle = new Label
             {
@@ -380,8 +376,6 @@ namespace WindowsFormsApp1
                 ForeColor = Color.FromArgb(228, 233, 240),
                 Padding = new Padding(0, 10, 0, 8)
             };
-            rightInfoPanel.Controls.Add(sectionTitle);
-
             TableLayoutPanel metricGrid = new TableLayoutPanel
             {
                 Dock = DockStyle.Top,
@@ -396,8 +390,6 @@ namespace WindowsFormsApp1
             metricGrid.RowStyles.Add(new RowStyle(SizeType.Absolute, 66F));
             metricGrid.RowStyles.Add(new RowStyle(SizeType.Absolute, 66F));
             metricGrid.RowStyles.Add(new RowStyle(SizeType.Absolute, 66F));
-            rightInfoPanel.Controls.Add(metricGrid);
-
             metricGrid.Controls.Add(CreateMetricCard("W", "px", out lblSelectedWidthPx), 0, 0);
             metricGrid.Controls.Add(CreateMetricCard("H", "px", out lblSelectedHeightPx), 1, 0);
             metricGrid.Controls.Add(CreateMetricCard("宽度", "mm", out lblSelectedWidthMm), 0, 1);
@@ -405,11 +397,12 @@ namespace WindowsFormsApp1
             metricGrid.Controls.Add(CreateWideMetricCard("DPI", out lblSelectedDpi), 0, 2);
             metricGrid.SetColumnSpan(metricGrid.GetControlFromPosition(0, 2), 2);
 
-            rightInfoPanel.Controls.SetChildIndex(lblSelectionTitle, 0);
-            rightInfoPanel.Controls.SetChildIndex(lblSelectionHint, 1);
-            rightInfoPanel.Controls.SetChildIndex(summaryCard, 2);
-            rightInfoPanel.Controls.SetChildIndex(sectionTitle, 3);
-            rightInfoPanel.Controls.SetChildIndex(metricGrid, 4);
+            // DockStyle.Top 的控件按从下往上的顺序添加，最终显示顺序才稳定。
+            rightInfoPanel.Controls.Add(metricGrid);
+            rightInfoPanel.Controls.Add(lblSelectionHint);
+            rightInfoPanel.Controls.Add(summaryCard);
+            rightInfoPanel.Controls.Add(sectionTitle);
+            rightInfoPanel.Controls.Add(lblSelectionTitle);
         }
 
         /// <summary>
