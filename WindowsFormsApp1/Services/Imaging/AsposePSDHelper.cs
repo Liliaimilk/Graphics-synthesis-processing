@@ -2,6 +2,7 @@ using BitMiracle.LibTiff;
 using BitMiracle.LibTiff.Classic;
 using ImageMagick;
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Imaging;
@@ -28,6 +29,7 @@ namespace WindowsFormsApp1
     public static class AsposePSDHelper
     {
         private const float OutputDpi = 300f;
+        private static readonly ConcurrentDictionary<string, CachedImagePixelData> ImagePixelCache = new ConcurrentDictionary<string, CachedImagePixelData>(StringComparer.OrdinalIgnoreCase);
 
         private sealed class ImagePixelData
         {
@@ -77,7 +79,7 @@ namespace WindowsFormsApp1
             {
                 controlCheckpoint?.Invoke();
                 progressCallback?.Invoke("正在读取模板...");
-                var backgroundData = LoadImagePixelData(templateTifPath);
+                var backgroundData = CloneImagePixelData(GetCachedImagePixelData(templateTifPath));
 
                 controlCheckpoint?.Invoke();
                 progressCallback?.Invoke("正在读取素材...");
@@ -89,7 +91,7 @@ namespace WindowsFormsApp1
                 {
                     controlCheckpoint?.Invoke();
                     progressCallback?.Invoke("正在读取摄像头遮罩...");
-                    exclusionMaskData = LoadImagePixelData(exclusionMaskPath);
+                    exclusionMaskData = GetCachedImagePixelData(exclusionMaskPath);
                     Console.WriteLine($"摄像头遮罩路径: {exclusionMaskPath}");
                     Console.WriteLine($"摄像头遮罩尺寸: W={exclusionMaskData.Width}, H={exclusionMaskData.Height}");
                 }
@@ -276,6 +278,45 @@ namespace WindowsFormsApp1
         {
             var pixelData = LoadImagePixelData(imagePath);
             return CreateBitmapFromArgbPixels(pixelData.Width, pixelData.Height, pixelData.Pixels);
+        }
+
+        /// <summary>
+        /// 获取缓存中的图像像素数据；如果源文件已变化则自动刷新缓存。
+        /// </summary>
+        private static ImagePixelData GetCachedImagePixelData(string imagePath)
+        {
+            string cacheKey = Path.GetFullPath(imagePath);
+            var fileInfo = new FileInfo(cacheKey);
+            if (!fileInfo.Exists)
+                throw new FileNotFoundException("找不到图像文件。", cacheKey);
+
+            var cached = ImagePixelCache.AddOrUpdate(
+                cacheKey,
+                _ => new CachedImagePixelData(fileInfo.Length, fileInfo.LastWriteTimeUtc, LoadImagePixelData(cacheKey)),
+                (_, existing) =>
+                {
+                    if (existing.FileLength == fileInfo.Length && existing.LastWriteTimeUtc == fileInfo.LastWriteTimeUtc)
+                    {
+                        return existing;
+                    }
+
+                    return new CachedImagePixelData(fileInfo.Length, fileInfo.LastWriteTimeUtc, LoadImagePixelData(cacheKey));
+                });
+
+            return cached.PixelData;
+        }
+
+        /// <summary>
+        /// 为需要写入的图像创建独立副本，防止缓存像素被当前任务修改。
+        /// </summary>
+        private static ImagePixelData CloneImagePixelData(ImagePixelData source)
+        {
+            if (source == null)
+                throw new ArgumentNullException(nameof(source));
+
+            var clonedPixels = new int[source.Pixels.Length];
+            Array.Copy(source.Pixels, clonedPixels, source.Pixels.Length);
+            return new ImagePixelData(source.Width, source.Height, clonedPixels);
         }
 
         private static ImagePixelData LoadImagePixelData(string imagePath)
@@ -1016,6 +1057,23 @@ namespace WindowsFormsApp1
                     image.Density = new Density(OutputDpi, OutputDpi);
                     image.Write(outputPath);
                 }
+            }
+        }
+
+        /// <summary>
+        /// 缓存图像像素数据，避免批量任务重复读取同一模板或遮罩文件。
+        /// </summary>
+        private sealed class CachedImagePixelData
+        {
+            public long FileLength { get; }
+            public DateTime LastWriteTimeUtc { get; }
+            public ImagePixelData PixelData { get; }
+
+            public CachedImagePixelData(long fileLength, DateTime lastWriteTimeUtc, ImagePixelData pixelData)
+            {
+                FileLength = fileLength;
+                LastWriteTimeUtc = lastWriteTimeUtc;
+                PixelData = pixelData ?? throw new ArgumentNullException(nameof(pixelData));
             }
         }
         // 辅助类

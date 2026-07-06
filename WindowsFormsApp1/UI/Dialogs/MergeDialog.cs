@@ -14,6 +14,7 @@ namespace WindowsFormsApp1
         private const int DialogWidth = 790;
         private const int SingleDialogHeight = 560;
         private const int BatchDialogHeight = 930;
+        private const int BatchPanelMinHeight = 320;
         private const int ChannelCardHeight = 44;
         private const int ChannelCardGap = 8;
         private const int SingleDialogBottomPadding = 144;
@@ -912,8 +913,16 @@ namespace WindowsFormsApp1
             btnClose.Location = new Point(160, buttonTop);
             pnlBatch.Location = new Point(20, buttonTop + 55);
 
-            int baseHeight = (chkBatchMode.Checked ? BatchDialogHeight : SingleDialogHeight) - 120;
-            int targetHeight = Math.Max(baseHeight, buttonTop + (chkBatchMode.Checked ? BatchDialogBottomPadding + pnlBatch.Height : SingleDialogBottomPadding));
+            if (chkBatchMode.Checked)
+            {
+                int availableBatchHeight = BatchDialogHeight - (pnlBatch.Top + BatchDialogBottomPadding);
+                pnlBatch.Height = Math.Max(BatchPanelMinHeight, availableBatchHeight);
+                this.Size = new Size(DialogWidth, BatchDialogHeight);
+                return;
+            }
+
+            int baseHeight = SingleDialogHeight - 120;
+            int targetHeight = Math.Max(baseHeight, buttonTop + SingleDialogBottomPadding);
             this.Size = new Size(DialogWidth, targetHeight);
         }
 
