@@ -300,7 +300,7 @@ namespace WindowsFormsApp1
             };
             btnMoveTool.FlatAppearance.BorderSize = 0;
             btnMoveTool.Click += (s, e) => SetCanvasTool(CanvasTool.Move);
-            toolbarToolTip.SetToolTip(btnMoveTool, "绉诲姩宸ュ叿");
+            toolbarToolTip.SetToolTip(btnMoveTool, "移动/选择");
             leftToolPanel.Controls.Add(btnMoveTool);
 
             SetCanvasTool(CanvasTool.Move);
@@ -399,10 +399,10 @@ namespace WindowsFormsApp1
 
             // DockStyle.Top 的控件按从下往上的顺序添加，最终显示顺序才稳定。
             rightInfoPanel.Controls.Add(metricGrid);
+            rightInfoPanel.Controls.Add(lblSelectionTitle);
             rightInfoPanel.Controls.Add(lblSelectionHint);
             rightInfoPanel.Controls.Add(summaryCard);
             rightInfoPanel.Controls.Add(sectionTitle);
-            rightInfoPanel.Controls.Add(lblSelectionTitle);
         }
 
         /// <summary>
@@ -506,7 +506,9 @@ namespace WindowsFormsApp1
                 return;
             }
 
-            lblSelectionSummary.Text = "已选中当前画布图片";
+            lblSelectionSummary.Text = string.IsNullOrWhiteSpace(selectionInfo.ImageName)
+                ? "未命名图片"
+                : selectionInfo.ImageName;
             lblSelectedWidthPx.Text = $"{selectionInfo.WidthPx} px";
             lblSelectedHeightPx.Text = $"{selectionInfo.HeightPx} px";
             lblSelectedWidthMm.Text = $"{selectionInfo.WidthMm:0.##} mm";

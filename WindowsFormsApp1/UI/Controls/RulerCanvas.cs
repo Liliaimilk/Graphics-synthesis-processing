@@ -18,6 +18,7 @@ namespace WindowsFormsApp1
     /// </summary>
     public sealed class CanvasSelectionInfo
     {
+        public string ImageName { get; set; }
         public int WidthPx { get; set; }
         public int HeightPx { get; set; }
         public decimal WidthMm { get; set; }
@@ -57,12 +58,13 @@ namespace WindowsFormsApp1
 
         private sealed class CanvasImageItem
         {
-            public CanvasImageItem(Bitmap image, PointF worldLocation, float horizontalDpi, float verticalDpi)
+            public CanvasImageItem(Bitmap image, PointF worldLocation, float horizontalDpi, float verticalDpi, string imageName)
             {
                 Image = image;
                 WorldLocation = worldLocation;
                 HorizontalDpi = horizontalDpi;
                 VerticalDpi = verticalDpi;
+                ImageName = imageName;
             }
 
             public Bitmap Image { get; }
@@ -70,6 +72,7 @@ namespace WindowsFormsApp1
             public bool IsSelected { get; set; }
             public float HorizontalDpi { get; }
             public float VerticalDpi { get; }
+            public string ImageName { get; }
         }
 
         private sealed class LoadedBitmapResult
@@ -77,6 +80,7 @@ namespace WindowsFormsApp1
             public Bitmap Bitmap { get; set; }
             public float HorizontalDpi { get; set; }
             public float VerticalDpi { get; set; }
+            public string ImageName { get; set; }
         }
 
         private const int RULER_SIZE = 28;
@@ -208,10 +212,10 @@ namespace WindowsFormsApp1
 
         public void AddImage(Bitmap bitmap)
         {
-            AddImage(bitmap, bitmap?.HorizontalResolution ?? DPI, bitmap?.VerticalResolution ?? DPI);
+            AddImage(bitmap, bitmap?.HorizontalResolution ?? DPI, bitmap?.VerticalResolution ?? DPI, "未命名图片");
         }
 
-        private void AddImage(Bitmap bitmap, float horizontalDpi, float verticalDpi)
+        private void AddImage(Bitmap bitmap, float horizontalDpi, float verticalDpi, string imageName)
         {
             if (bitmap == null)
             {
@@ -223,7 +227,8 @@ namespace WindowsFormsApp1
                 bitmap,
                 worldLocation,
                 NormalizeResolution(horizontalDpi),
-                NormalizeResolution(verticalDpi));
+                NormalizeResolution(verticalDpi),
+                string.IsNullOrWhiteSpace(imageName) ? "未命名图片" : imageName);
             _images.Add(item);
             SelectImage(item, true);
 
@@ -338,7 +343,7 @@ namespace WindowsFormsApp1
 
                 foreach (LoadedBitmapResult bmp in loadedBitmaps)
                 {
-                    AddImage(bmp.Bitmap, bmp.HorizontalDpi, bmp.VerticalDpi);
+                    AddImage(bmp.Bitmap, bmp.HorizontalDpi, bmp.VerticalDpi, bmp.ImageName);
                 }
 
                 loadedBitmaps.Clear();
@@ -359,7 +364,7 @@ namespace WindowsFormsApp1
             try
             {
                 LoadedBitmapResult result = LoadBitmapFromFile(filePath);
-                AddImage(result.Bitmap, result.HorizontalDpi, result.VerticalDpi);
+                AddImage(result.Bitmap, result.HorizontalDpi, result.VerticalDpi, result.ImageName);
             }
             catch (Exception ex)
             {
@@ -1014,7 +1019,8 @@ namespace WindowsFormsApp1
                 {
                     Bitmap = bitmap,
                     HorizontalDpi = NormalizeResolution(bitmap.HorizontalResolution),
-                    VerticalDpi = NormalizeResolution(bitmap.VerticalResolution)
+                    VerticalDpi = NormalizeResolution(bitmap.VerticalResolution),
+                    ImageName = Path.GetFileName(filePath)
                 };
             }
             catch (Exception gdiEx) when (IsTiffFile(filePath))
@@ -1081,7 +1087,8 @@ namespace WindowsFormsApp1
                         {
                             Bitmap = bitmap,
                             HorizontalDpi = horizontalDpi,
-                            VerticalDpi = verticalDpi
+                            VerticalDpi = verticalDpi,
+                            ImageName = Path.GetFileName(filePath)
                         };
                     }
                 }
@@ -1140,7 +1147,8 @@ namespace WindowsFormsApp1
                 {
                     Bitmap = bitmap,
                     HorizontalDpi = horizontalDpi,
-                    VerticalDpi = verticalDpi
+                    VerticalDpi = verticalDpi,
+                    ImageName = Path.GetFileName(filePath)
                 };
             }
         }
@@ -1212,7 +1220,8 @@ namespace WindowsFormsApp1
                     bitmap.Bitmap,
                     new PointF(currentX, y),
                     NormalizeResolution(bitmap.HorizontalDpi),
-                    NormalizeResolution(bitmap.VerticalDpi));
+                    NormalizeResolution(bitmap.VerticalDpi),
+                    bitmap.ImageName);
                 _images.Add(item);
                 currentX += bitmap.Bitmap.Width + spacing;
             }
@@ -1307,6 +1316,7 @@ namespace WindowsFormsApp1
 
             SelectedImageChanged?.Invoke(new CanvasSelectionInfo
             {
+                ImageName = string.IsNullOrWhiteSpace(_selectedImage.ImageName) ? "未命名图片" : _selectedImage.ImageName,
                 WidthPx = _selectedImage.Image.Width,
                 HeightPx = _selectedImage.Image.Height,
                 WidthMm = Math.Round((decimal)_selectedImage.Image.Width / (decimal)NormalizeResolution(_selectedImage.HorizontalDpi) * 25.4m, 2),
