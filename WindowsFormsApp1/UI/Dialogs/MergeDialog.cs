@@ -286,6 +286,20 @@ namespace WindowsFormsApp1
                 return null;
             }
 
+            string pairedError;
+            BuildJobsResult pairedJobs = BuildJobsFromRemotePairNames(request, format, out pairedError);
+            if (pairedJobs != null)
+            {
+                chkBatchMode.Checked = pairedJobs.Jobs.Count > 1;
+                return pairedJobs;
+            }
+
+            if (!string.IsNullOrWhiteSpace(pairedError))
+            {
+                ShowStatusMessage("远程组合名匹配失败", pairedError, "错误", MessageBoxIcon.Error);
+                return null;
+            }
+
             string templateError;
             string templateFile = ResolveRemoteTemplateFile(request, out templateError);
             if (templateFile == null)
@@ -306,6 +320,138 @@ namespace WindowsFormsApp1
             bool batchMode = materialFiles.Count > 1;
             chkBatchMode.Checked = batchMode;
             return BuildJobsCore(templateFile, materialFiles, batchMode, format);
+        }
+
+        /// <summary>
+        /// 远程 WS 批量名形如“模版名_素材名”时，按组合名一一匹配模版和素材。
+        /// </summary>
+        private BuildJobsResult BuildJobsFromRemotePairNames(RemoteMergeRequest request, string format, out string errorMessage)
+        {
+            errorMessage = null;
+            if (!string.IsNullOrWhiteSpace(request?.TemplateName))
+            {
+                return null;
+            }
+
+            List<string> names = (request?.MaterialNames ?? new List<string>())
+                .Where(name => !string.IsNullOrWhiteSpace(name))
+                .Select(name => name.Trim())
+                .ToList();
+            if (names.Count == 0 || !names.Any(name => name.Contains("_")))
+            {
+                return null;
+            }
+
+            List<string> templateFiles = GetImageFiles(txtTemplateFolder.Text);
+            List<string> materialFiles = GetImageFiles(txtMaterialFolder.Text);
+            if (templateFiles.Count == 0)
+            {
+                errorMessage = "模版文件夹未找到图片文件";
+                return null;
+            }
+
+            if (materialFiles.Count == 0)
+            {
+                errorMessage = "素材文件夹未找到图片文件";
+                return null;
+            }
+
+            string ignoredTemplateName;
+            string ignoredMaterialName;
+            string ignoredError;
+            bool hasMatchedPairName = names.Any(name =>
+                TrySplitRemotePairName(name, templateFiles, out ignoredTemplateName, out ignoredMaterialName, out ignoredError));
+            if (!hasMatchedPairName)
+            {
+                return null;
+            }
+
+            string separator = string.IsNullOrWhiteSpace(txtSeparator.Text) ? "-" : txtSeparator.Text;
+            string ext = GetOutputExtension(format);
+            var jobs = new List<MergeJobItem>();
+            int index = 1;
+
+            foreach (string pairName in names)
+            {
+                string templateName;
+                string materialName;
+                if (!TrySplitRemotePairName(pairName, templateFiles, out templateName, out materialName, out errorMessage))
+                {
+                    return null;
+                }
+
+                string currentError;
+                string templateFile = ResolveSingleFileByBaseName(templateFiles, templateName, "模版", out currentError);
+                if (templateFile == null)
+                {
+                    errorMessage = currentError;
+                    return null;
+                }
+
+                string materialFile = ResolveSingleFileByBaseName(materialFiles, materialName, "素材", out currentError);
+                if (materialFile == null)
+                {
+                    errorMessage = currentError;
+                    return null;
+                }
+
+                string baseName = GetBaseName(templateFile) + separator + GetBaseName(materialFile);
+                jobs.Add(new MergeJobItem
+                {
+                    Index = index++,
+                    TemplatePath = templateFile,
+                    MaterialPath = materialFile,
+                    OutputPath = NextOutputFile(txtSavePath.Text, baseName, ext),
+                    Status = MergeJobStatus.Pending,
+                    Message = "等待处理"
+                });
+            }
+
+            TemplateCompositeMode compositeMode = TemplateCompositeMode.FullBleed;
+            return new BuildJobsResult
+            {
+                IsBatchMode = jobs.Count > 1,
+                TemplateFile = jobs[0].TemplatePath,
+                Jobs = jobs,
+                Format = format,
+                CompositeMode = compositeMode,
+                CompositeModeName = "满版模式",
+                ExclusionMaskPath = null,
+                Rotation = null,
+                Mirror = null
+            };
+        }
+
+        /// <summary>
+        /// 按真实模版文件名前缀拆分组合名，支持模版名本身包含下划线。
+        /// </summary>
+        private bool TrySplitRemotePairName(string pairName, List<string> templateFiles, out string templateName, out string materialName, out string errorMessage)
+        {
+            templateName = null;
+            materialName = null;
+            errorMessage = null;
+            string normalizedPairName = (pairName ?? string.Empty).Trim();
+
+            var templateBaseNames = (templateFiles ?? new List<string>())
+                .Select(GetBaseName)
+                .Where(name => !string.IsNullOrWhiteSpace(name))
+                .OrderByDescending(name => name.Length)
+                .ToList();
+
+            foreach (string currentTemplateName in templateBaseNames)
+            {
+                string prefix = currentTemplateName + "_";
+                if (normalizedPairName.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) &&
+                    normalizedPairName.Length > prefix.Length)
+                {
+                    templateName = currentTemplateName;
+                    materialName = normalizedPairName.Substring(prefix.Length).Trim();
+                    return true;
+                }
+            }
+
+            errorMessage = $"组合名无法匹配模版前缀: {normalizedPairName}";
+            return false;
         }
 
         private string ResolveRemoteTemplateFile(RemoteMergeRequest request, out string errorMessage)
@@ -1414,17 +1560,7 @@ namespace WindowsFormsApp1
             var validJobs = new List<MergeJobItem>();
             var invalidMessages = new List<string>();
 
-            lblStatus.Text = "正在预检模版...";
-            var templateValidation = await Task.Run(() => ValidateImage(buildResult.TemplateFile));
-            if (!templateValidation.IsValid)
-            {
-                ShowStatusMessage(
-                    "模版预检失败",
-                    $"模版预检失败: {templateValidation.ErrorMessage}",
-                    "错误",
-                    MessageBoxIcon.Error);
-                return null;
-            }
+            var validatedTemplates = new Dictionary<string, ValidationResult>(StringComparer.OrdinalIgnoreCase);
 
             foreach (MergeJobItem job in buildResult.Jobs)
             {
@@ -1432,6 +1568,26 @@ namespace WindowsFormsApp1
                 {
                     UpdateJobStatus(job, MergeJobStatus.Validating, "预检中...");
                     UpdateBatchSummary();
+                }
+
+                ValidationResult templateValidation;
+                if (!validatedTemplates.TryGetValue(job.TemplatePath, out templateValidation))
+                {
+                    lblStatus.Text = $"正在预检模版: {Path.GetFileName(job.TemplatePath)}";
+                    templateValidation = await Task.Run(() => ValidateImage(job.TemplatePath));
+                    validatedTemplates[job.TemplatePath] = templateValidation;
+                }
+
+                if (!templateValidation.IsValid)
+                {
+                    string message = $"模版预检失败: {templateValidation.ErrorMessage}";
+                    invalidMessages.Add($"{Path.GetFileName(job.TemplatePath)}: {message}");
+                    if (buildResult.IsBatchMode)
+                    {
+                        UpdateJobStatus(job, MergeJobStatus.Skipped, message);
+                        UpdateBatchSummary();
+                    }
+                    continue;
                 }
 
                 lblStatus.Text = $"正在预检素材: {Path.GetFileName(job.MaterialPath)}";

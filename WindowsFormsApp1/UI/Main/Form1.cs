@@ -74,8 +74,7 @@ namespace WindowsFormsApp1
 
     public partial class Form1 : Form
     {
-        //"ws://192.168.0.222:8080/websocket/2"
-        private const string RemoteWebSocketEndpoint = null;
+        private const string RemoteWebSocketEndpoint = "ws://localhost:8080/websocket/2";
 
         private RulerCanvas canvas;
         private Panel workspacePanel;

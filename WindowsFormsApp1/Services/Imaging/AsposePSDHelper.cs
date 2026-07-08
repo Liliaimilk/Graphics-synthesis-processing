@@ -1101,6 +1101,7 @@ namespace WindowsFormsApp1
                     break;
                 }
             }
+            Console.WriteLine(hasTransparency ? "图像包含透明或半透明区域，将保留透明通道。" : "图像不包含透明区域。");
 
             int placeholderChannelCount = channelNames.Count;
             int extraSampleCount = placeholderChannelCount + (hasTransparency ? 1 : 0);
@@ -1141,7 +1142,7 @@ namespace WindowsFormsApp1
                             $"Placeholder TIFF extra channels: {string.Join(", ", placeholderChannelNames)}");
 
                         var photoshopChannelNames = new List<string>();
-                         if (hasTransparency)
+                        if (hasTransparency)
                             photoshopChannelNames.Add("Alpha");
                         photoshopChannelNames.AddRange(placeholderChannelNames);
                         TryWritePhotoshopChannelNames(tif, photoshopChannelNames);
