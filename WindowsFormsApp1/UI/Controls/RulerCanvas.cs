@@ -83,7 +83,7 @@ namespace WindowsFormsApp1
             public string ImageName { get; set; }
         }
 
-        private const int RULER_SIZE = 28;
+        private const int RULER_SIZE = 36;
         private const float MIN_ZOOM = 0.1f;
         private const float MAX_ZOOM = 10f;
         private const float ZOOM_STEP = 0.02f;
@@ -869,30 +869,46 @@ namespace WindowsFormsApp1
 
         private void DrawXAxis(Graphics g, SolidBrush textBrush, Pen linePen, Font tickFont)
         {
+            Rectangle viewportBounds = GetViewportBounds();
             float pixelPerMm = MM_TO_PX * _zoom;
-            int endMm = pixelPerMm <= 0 ? 0 : (int)Math.Ceiling((Width - RULER_SIZE) / pixelPerMm);
+            if (pixelPerMm <= 0 || viewportBounds.Width <= 0)
+            {
+                return;
+            }
+
+            float startMm = ScreenToWorld(new PointF(viewportBounds.Left, viewportBounds.Top)).X / MM_TO_PX;
+            float endMm = ScreenToWorld(new PointF(viewportBounds.Right, viewportBounds.Top)).X / MM_TO_PX;
+            if (endMm < startMm)
+            {
+                float temp = startMm;
+                startMm = endMm;
+                endMm = temp;
+            }
+
             int interval = GetAdaptiveInterval(pixelPerMm);
             int subInterval = Math.Max(1, interval / 5);
+            int firstTick = (int)Math.Floor(startMm / subInterval) * subInterval;
+            int lastTick = (int)Math.Ceiling(endMm / subInterval) * subInterval;
 
-            for (int mm = 0; mm <= endMm; mm++)
+            for (int mm = firstTick; mm <= lastTick; mm += subInterval)
             {
-                float x = RULER_SIZE + mm * pixelPerMm;
-                if (x > Width)
+                float x = _panOffset.X + (mm * MM_TO_PX * _zoom);
+                if (x < viewportBounds.Left - 1 || x > viewportBounds.Right + 1)
                 {
-                    break;
+                    continue;
                 }
 
-                if (mm % interval == 0)
+                if (IsMajorTick(mm, interval))
                 {
                     int tickHeight = interval >= 50 ? 8 : interval >= 10 ? 12 : 16;
                     g.DrawLine(linePen, x, RULER_SIZE - tickHeight, x, RULER_SIZE - 1);
                     if (pixelPerMm * interval >= 40)
                     {
-                        string label = interval >= 100 ? (mm / 100).ToString() : (mm / 10).ToString();
-                        g.DrawString(label, tickFont, textBrush, new RectangleF(x + 2, 2, 32, 12));
+                        string label = FormatRulerLabel(mm, interval);
+                        g.DrawString(label, tickFont, textBrush, new RectangleF(x + 2, 3, 48, 12));
                     }
                 }
-                else if (mm % subInterval == 0)
+                else
                 {
                     g.DrawLine(linePen, x, RULER_SIZE - 8, x, RULER_SIZE - 1);
                 }
@@ -901,34 +917,82 @@ namespace WindowsFormsApp1
 
         private void DrawYAxis(Graphics g, SolidBrush textBrush, Pen linePen, Font tickFont)
         {
+            Rectangle viewportBounds = GetViewportBounds();
             float pixelPerMm = MM_TO_PX * _zoom;
-            int endMm = pixelPerMm <= 0 ? 0 : (int)Math.Ceiling((Height - RULER_SIZE) / pixelPerMm);
+            if (pixelPerMm <= 0 || viewportBounds.Height <= 0)
+            {
+                return;
+            }
+
+            float startMm = ScreenToWorld(new PointF(viewportBounds.Left, viewportBounds.Top)).Y / MM_TO_PX;
+            float endMm = ScreenToWorld(new PointF(viewportBounds.Left, viewportBounds.Bottom)).Y / MM_TO_PX;
+            if (endMm < startMm)
+            {
+                float temp = startMm;
+                startMm = endMm;
+                endMm = temp;
+            }
+
             int interval = GetAdaptiveInterval(pixelPerMm);
             int subInterval = Math.Max(1, interval / 5);
-
-            for (int mm = 0; mm <= endMm; mm++)
+            int firstTick = (int)Math.Floor(startMm / subInterval) * subInterval;
+            int lastTick = (int)Math.Ceiling(endMm / subInterval) * subInterval;
+            using (StringFormat labelFormat = new StringFormat())
             {
-                float y = RULER_SIZE + mm * pixelPerMm;
-                if (y > Height)
-                {
-                    break;
-                }
+                labelFormat.Alignment = StringAlignment.Far;
+                labelFormat.LineAlignment = StringAlignment.Center;
 
-                if (mm % interval == 0)
+                for (int mm = firstTick; mm <= lastTick; mm += subInterval)
                 {
-                    int tickWidth = interval >= 50 ? 8 : interval >= 10 ? 12 : 16;
-                    g.DrawLine(linePen, RULER_SIZE - tickWidth, y, RULER_SIZE - 1, y);
-                    if (pixelPerMm * interval >= 40)
+                    float y = _panOffset.Y + (mm * MM_TO_PX * _zoom);
+                    if (y < viewportBounds.Top - 1 || y > viewportBounds.Bottom + 1)
                     {
-                        string label = interval >= 100 ? (mm / 100).ToString() : (mm / 10).ToString();
-                        g.DrawString(label, tickFont, textBrush, new RectangleF(2, y - 7, RULER_SIZE - 4, 14));
+                        continue;
+                    }
+
+                    if (IsMajorTick(mm, interval))
+                    {
+                        int tickWidth = interval >= 50 ? 8 : interval >= 10 ? 12 : 16;
+                        g.DrawLine(linePen, RULER_SIZE - tickWidth, y, RULER_SIZE - 1, y);
+                        if (pixelPerMm * interval >= 40)
+                        {
+                            string label = FormatRulerLabel(mm, interval);
+                            g.DrawString(label, tickFont, textBrush, new RectangleF(1, y - 7, RULER_SIZE - 4, 14), labelFormat);
+                        }
+                    }
+                    else
+                    {
+                        g.DrawLine(linePen, RULER_SIZE - 8, y, RULER_SIZE - 1, y);
                     }
                 }
-                else if (mm % subInterval == 0)
-                {
-                    g.DrawLine(linePen, RULER_SIZE - 8, y, RULER_SIZE - 1, y);
-                }
             }
+        }
+
+        /// <summary>
+        /// 判断当前刻度是否为主刻度，兼容负坐标场景。
+        /// </summary>
+        private static bool IsMajorTick(int valueMm, int intervalMm)
+        {
+            if (intervalMm <= 0)
+            {
+                return false;
+            }
+
+            int remainder = valueMm % intervalMm;
+            return remainder == 0;
+        }
+
+        /// <summary>
+        /// 根据当前刻度间距格式化标尺文本，缩放较小时尽量保持简洁。
+        /// </summary>
+        private static string FormatRulerLabel(int valueMm, int intervalMm)
+        {
+            if (intervalMm >= 100)
+            {
+                return (valueMm / 10f).ToString("0.#");
+            }
+
+            return valueMm.ToString();
         }
 
         private void DrawGuides(Graphics g)
