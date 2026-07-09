@@ -55,8 +55,8 @@ namespace WindowsFormsApp1
             public List<Rectangle> Slots { get; set; } = new List<Rectangle>();
         }
 
-        private const string WhiteInkChannelName = "whiteInk";
-        private const string VarnishChannelName = "varnish";
+        private const string WhiteInkChannelName = "通道1";
+        private const string VarnishChannelName = "通道2";
 
         public static PreparedLayout PrepareLayout(SheetLayoutSettings settings)
         {
@@ -186,7 +186,7 @@ namespace WindowsFormsApp1
                 throw new DirectoryNotFoundException("大图输出目录无效");
 
             PreparedLayout prepared = PrepareLayout(request.Settings);
-            if (imageFiles.Count > prepared.Capacity)
+            if (imageFiles.Count > prepared.Capacity) 
                 throw new InvalidOperationException($"当前版式容量不足，最多可放 {prepared.Capacity} 张，实际找到 {imageFiles.Count} 张");
 
             progressCallback?.Invoke("正在预检图片...");

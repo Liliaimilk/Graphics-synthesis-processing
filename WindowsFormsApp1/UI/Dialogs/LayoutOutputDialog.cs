@@ -57,6 +57,10 @@ namespace WindowsFormsApp1
         private bool isRunning;
         private Dictionary<string, Image> thumbnailCache = new Dictionary<string, Image>(StringComparer.OrdinalIgnoreCase);
         private List<string> currentImageFiles = new List<string>();
+        private readonly string layoutCachePath = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "WindowsFormsApp1",
+            "layout-output-cache.txt");
 
         public string ResultPath { get; private set; }
 
@@ -956,6 +960,7 @@ namespace WindowsFormsApp1
                 if (request == null)
                     return;
 
+                SaveLayoutInputCache();
                 SetBusyState(true);
                 LayoutOutputResult result = await Task.Run(() => LayoutOutputHelper.Execute(request, UpdateStatusSafe));
                 ResultPath = result.OutputPath;
@@ -1042,6 +1047,7 @@ namespace WindowsFormsApp1
                     {
                         SaveOutputPath(dialog.SelectedPath);
                     }
+                    SaveLayoutInputCache();
                     // Auto refresh preview when folder changes
                     // RefreshPreview();
                 }
@@ -1062,6 +1068,8 @@ namespace WindowsFormsApp1
             catch
             {
             }
+
+            LoadLayoutInputCache();
         }
 
         private void SaveOutputPath(string path)
@@ -1074,6 +1082,86 @@ namespace WindowsFormsApp1
             }
             catch
             {
+            }
+        }
+
+        /// <summary>
+        /// 加载排版输出输入框缓存；扫码输入框不参与缓存。
+        /// </summary>
+        private void LoadLayoutInputCache()
+        {
+            try
+            {
+                if (!File.Exists(layoutCachePath))
+                    return;
+
+                Dictionary<string, string> values = File.ReadAllLines(layoutCachePath)
+                    .Select(line => line.Split(new[] { '=' }, 2))
+                    .Where(parts => parts.Length == 2)
+                    .ToDictionary(parts => parts[0], parts => Uri.UnescapeDataString(parts[1]));
+
+                ApplyCachedText(values, "SourceFolder", txtSourceFolder);
+                ApplyCachedText(values, "OutputFolder", txtOutputFolder);
+                ApplyCachedText(values, "OutputFileName", txtOutputFileName);
+                ApplyCachedText(values, "SheetWidth", txtSheetWidth);
+                ApplyCachedText(values, "SheetHeight", txtSheetHeight);
+                ApplyCachedText(values, "Dpi", txtDpi);
+                ApplyCachedText(values, "StartX", txtStartX);
+                ApplyCachedText(values, "StartY", txtStartY);
+                ApplyCachedText(values, "SlotWidth", txtSlotWidth);
+                ApplyCachedText(values, "SlotHeight", txtSlotHeight);
+                ApplyCachedText(values, "HorizontalGap", txtHorizontalGap);
+                ApplyCachedText(values, "VerticalGap", txtVerticalGap);
+                ApplyCachedText(values, "Rows", txtRows);
+                ApplyCachedText(values, "Columns", txtColumns);
+            }
+            catch
+            {
+            }
+        }
+
+        /// <summary>
+        /// 保存排版输出输入框缓存；扫码输入框不参与缓存。
+        /// </summary>
+        private void SaveLayoutInputCache()
+        {
+            try
+            {
+                string folder = Path.GetDirectoryName(layoutCachePath);
+                if (!Directory.Exists(folder))
+                    Directory.CreateDirectory(folder);
+
+                var values = new Dictionary<string, string>
+                {
+                    ["SourceFolder"] = txtSourceFolder.Text ?? string.Empty,
+                    ["OutputFolder"] = txtOutputFolder.Text ?? string.Empty,
+                    ["OutputFileName"] = txtOutputFileName.Text ?? string.Empty,
+                    ["SheetWidth"] = txtSheetWidth.Text ?? string.Empty,
+                    ["SheetHeight"] = txtSheetHeight.Text ?? string.Empty,
+                    ["Dpi"] = txtDpi.Text ?? string.Empty,
+                    ["StartX"] = txtStartX.Text ?? string.Empty,
+                    ["StartY"] = txtStartY.Text ?? string.Empty,
+                    ["SlotWidth"] = txtSlotWidth.Text ?? string.Empty,
+                    ["SlotHeight"] = txtSlotHeight.Text ?? string.Empty,
+                    ["HorizontalGap"] = txtHorizontalGap.Text ?? string.Empty,
+                    ["VerticalGap"] = txtVerticalGap.Text ?? string.Empty,
+                    ["Rows"] = txtRows.Text ?? string.Empty,
+                    ["Columns"] = txtColumns.Text ?? string.Empty
+                };
+
+                File.WriteAllLines(layoutCachePath, values.Select(pair => pair.Key + "=" + Uri.EscapeDataString(pair.Value)));
+            }
+            catch
+            {
+            }
+        }
+
+        private static void ApplyCachedText(Dictionary<string, string> values, string key, TextBox textBox)
+        {
+            string value;
+            if (values != null && textBox != null && values.TryGetValue(key, out value))
+            {
+                textBox.Text = value;
             }
         }
 
@@ -1203,6 +1291,7 @@ namespace WindowsFormsApp1
 
         protected override void OnFormClosed(FormClosedEventArgs e)
         {
+            SaveLayoutInputCache();
             ClearThumbnailCache();
             base.OnFormClosed(e);
         }
