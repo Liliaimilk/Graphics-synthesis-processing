@@ -32,6 +32,7 @@ namespace WindowsFormsApp1
         public string OutputFileName { get; set; }
         public SheetLayoutSettings Settings { get; set; }
         public IReadOnlyList<string> ManualImageFiles { get; set; }
+        public bool DrawSlotBounds { get; set; }
     }
 
     public sealed class LayoutOutputResult
@@ -247,6 +248,12 @@ namespace WindowsFormsApp1
                             graphics.DrawImage(source, targetRect);
                         }
                     }
+
+                    // 如果勾选绘制边框则输出带格子的大图，便于校验排版坐标及实际打印尺寸。
+                    if (request.DrawSlotBounds)
+                    {
+                        DrawSlotBounds(graphics, prepared.Slots, prepared.Dpi);
+                    }
                 }
 
                 progressCallback?.Invoke("正在导出 TIF...");
@@ -263,6 +270,23 @@ namespace WindowsFormsApp1
                 CanvasSize = new Size(prepared.CanvasWidthPx, prepared.CanvasHeightPx),
                 Slots = prepared.Slots.AsReadOnly()
             };
+        }
+
+        /// <summary>
+        /// 在成品图上绘制格位边框，便于校验排版坐标及实际打印尺寸。
+        /// </summary>
+        private static void DrawSlotBounds(Graphics graphics, IEnumerable<Rectangle> slots, int dpi)
+        {
+            float lineWidth = Math.Max(1f, dpi * 0.3f / 25.4f);
+            using (var pen = new Pen(Color.Magenta, lineWidth))
+            {
+                foreach (Rectangle slot in slots)
+                {
+                    int width = Math.Max(1, slot.Width - 1);
+                    int height = Math.Max(1, slot.Height - 1);
+                    graphics.DrawRectangle(pen, slot.Left, slot.Top, width, height);
+                }
+            }
         }
 
         private static Rectangle CalculateContainRect(Size imageSize, Rectangle slot)

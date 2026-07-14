@@ -41,6 +41,7 @@ namespace WindowsFormsApp1
         private Button btnBrowseSource;
         private Button btnBrowseOutput;
         private Button btnRefreshPreview;
+        private CheckBox chkDrawSlotBounds;
 
         private Button btnPreviewAll;
         private Button btnRun;
@@ -197,6 +198,20 @@ namespace WindowsFormsApp1
             txtVerticalGap.Text = "10";
             txtVerticalGap.TextChanged += (s, e) => MarkPreviewDirty();
             leftPanel.Controls.Add(txtVerticalGap);
+
+            // Measurement mode row
+            startY += rowHeight;
+            chkDrawSlotBounds = new CheckBox
+            {
+                Text = "输出格位框（测量用）",
+                Location = new Point(startX, startY + 4),
+                Size = new Size(220, 24),
+                Font = new Font("微软雅黑", 9F),
+                ForeColor = Color.FromArgb(220, 225, 235),
+                BackColor = Color.Transparent,
+                Checked = false
+            };
+            leftPanel.Controls.Add(chkDrawSlotBounds);
 
             // Buttons row
             startY += rowHeight + 10;
@@ -1015,6 +1030,7 @@ namespace WindowsFormsApp1
                 OutputFolder = txtOutputFolder.Text.Trim(),
                 OutputFileName = txtOutputFileName.Text.Trim(),
                 ManualImageFiles = hasManualFiles ? currentImageFiles.ToList() : null,
+                DrawSlotBounds = chkDrawSlotBounds.Checked,
                 Settings = new SheetLayoutSettings
                 {
                     SheetWidthMm = sheetWidth,
