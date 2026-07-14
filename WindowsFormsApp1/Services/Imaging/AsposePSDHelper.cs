@@ -1334,6 +1334,15 @@ namespace WindowsFormsApp1
                         byte r = sourceRow[sourceIdx + 2];
                         byte alpha = sourceRow[sourceIdx + 3];
 
+                        // TIFF 仍保留 Alpha，但 CMYK 底色统一垫白，避免透明的 RGB(0,0,0)
+                        // 被转换为 K=255，导致不识别透明度的预览或 RIP 输出黑底。
+                        if (alpha < byte.MaxValue)
+                        {
+                            r = CompositeChannelOverWhite(r, alpha);
+                            g = CompositeChannelOverWhite(g, alpha);
+                            b = CompositeChannelOverWhite(b, alpha);
+                        }
+
                         ConvertRgbToCmyk(r, g, b,
                             out scanline[destIdx + 0],
                             out scanline[destIdx + 1],
@@ -1357,6 +1366,14 @@ namespace WindowsFormsApp1
             {
                 bitmap.UnlockBits(bitmapData);
             }
+        }
+
+        /// <summary>
+        /// 将一个半透明色彩分量按白色底板预合成，透明度仍由 TIFF Alpha 通道单独保存。
+        /// </summary>
+        private static byte CompositeChannelOverWhite(byte channel, byte alpha)
+        {
+            return (byte)((channel * alpha + 255 * (255 - alpha) + 127) / 255);
         }
 
         private static void ConvertRgbToCmyk(byte r, byte g, byte b, out byte c, out byte m, out byte y, out byte k)
