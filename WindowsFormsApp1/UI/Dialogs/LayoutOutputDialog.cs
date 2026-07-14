@@ -203,7 +203,7 @@ namespace WindowsFormsApp1
             startY += rowHeight;
             chkDrawSlotBounds = new CheckBox
             {
-                Text = "输出格位框（测量用）",
+                Text = "输出格子定位图（测量用）",
                 Location = new Point(startX, startY + 4),
                 Size = new Size(220, 24),
                 Font = new Font("微软雅黑", 9F),
@@ -979,7 +979,9 @@ namespace WindowsFormsApp1
                 SetBusyState(true);
                 LayoutOutputResult result = await Task.Run(() => LayoutOutputHelper.Execute(request, UpdateStatusSafe));
                 ResultPath = result.OutputPath;
-                lblStatus.Text = $"排版完成，已输出 {Path.GetFileName(ResultPath)}";
+                lblStatus.Text = string.IsNullOrWhiteSpace(result.SlotGuidePath)
+                    ? $"排版完成，已输出 {Path.GetFileName(ResultPath)}"
+                    : $"已先输出定位图，再输出正式图：{Path.GetFileName(ResultPath)}";
                 DialogResult = DialogResult.OK;
                 Close();
             }

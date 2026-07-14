@@ -38,6 +38,7 @@ namespace WindowsFormsApp1
     public sealed class LayoutOutputResult
     {
         public string OutputPath { get; set; }
+        public string SlotGuidePath { get; set; }
         public int PlacedImageCount { get; set; }
         public Size CanvasSize { get; set; }
         public IReadOnlyList<Rectangle> Slots { get; set; }
@@ -221,6 +222,14 @@ namespace WindowsFormsApp1
 
             string outputFileName = SanitizeOutputFileName(request.OutputFileName);
             string outputPath = NextOutputFile(request.OutputFolder, outputFileName, ".tif");
+            string slotGuidePath = null;
+
+            if (request.DrawSlotBounds)
+            {
+                slotGuidePath = NextOutputFile(request.OutputFolder, outputFileName + "_格子定位", ".tif");
+                progressCallback?.Invoke("正在导出格子定位图...");
+                ExportSlotGuide(prepared, slotGuidePath);
+            }
 
             progressCallback?.Invoke("正在创建大图画布...");
             using (var canvas = new Bitmap(prepared.CanvasWidthPx, prepared.CanvasHeightPx, System.Drawing.Imaging.PixelFormat.Format32bppArgb))
@@ -250,10 +259,6 @@ namespace WindowsFormsApp1
                     }
 
                     // 如果勾选绘制边框则输出带格子的大图，便于校验排版坐标及实际打印尺寸。
-                    if (request.DrawSlotBounds)
-                    {
-                        DrawSlotBounds(graphics, prepared.Slots, prepared.Dpi);
-                    }
                 }
 
                 progressCallback?.Invoke("正在导出 TIF...");
@@ -266,6 +271,7 @@ namespace WindowsFormsApp1
             return new LayoutOutputResult
             {
                 OutputPath = outputPath,
+                SlotGuidePath = slotGuidePath,
                 PlacedImageCount = imageFiles.Count,
                 CanvasSize = new Size(prepared.CanvasWidthPx, prepared.CanvasHeightPx),
                 Slots = prepared.Slots.AsReadOnly()
@@ -275,6 +281,28 @@ namespace WindowsFormsApp1
         /// <summary>
         /// 在成品图上绘制格位边框，便于校验排版坐标及实际打印尺寸。
         /// </summary>
+        /// <summary>
+        /// 输出仅包含格位边框的定位图，用于先打印定位线后放置产品。
+        /// </summary>
+        private static void ExportSlotGuide(PreparedLayout prepared, string outputPath)
+        {
+            using (var canvas = new Bitmap(prepared.CanvasWidthPx, prepared.CanvasHeightPx, System.Drawing.Imaging.PixelFormat.Format32bppArgb))
+            {
+                canvas.SetResolution(prepared.Dpi, prepared.Dpi);
+                using (Graphics graphics = Graphics.FromImage(canvas))
+                {
+                    graphics.Clear(Color.Transparent);
+                    graphics.SmoothingMode = SmoothingMode.HighQuality;
+                    DrawSlotBounds(graphics, prepared.Slots, prepared.Dpi);
+                }
+
+                AsposePSDHelper.SaveBitmapAsTiffWithSpotChannels(
+                    canvas,
+                    outputPath,
+                    new List<string> { WhiteInkChannelName, VarnishChannelName });
+            }
+        }
+
         private static void DrawSlotBounds(Graphics graphics, IEnumerable<Rectangle> slots, int dpi)
         {
             float lineWidth = Math.Max(1f, dpi * 0.3f / 25.4f);
