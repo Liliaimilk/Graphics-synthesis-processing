@@ -19,6 +19,7 @@ namespace WindowsFormsApp1
         private const int ChannelCardGap = 8;
         private const int SingleDialogBottomPadding = 144;
         private const int BatchDialogBottomPadding = 95;
+        private const string DefaultOutputSeparator = "_";
 
         List<string> channelNames = new List<string>();
 
@@ -366,7 +367,7 @@ namespace WindowsFormsApp1
                 return null;
             }
 
-            string separator = string.IsNullOrWhiteSpace(txtSeparator.Text) ? "-" : txtSeparator.Text;
+            string separator = GetOutputSeparator();
             string ext = GetOutputExtension(format);
             var jobs = new List<MergeJobItem>();
             int index = 1;
@@ -530,7 +531,7 @@ namespace WindowsFormsApp1
 
         private BuildJobsResult BuildJobsCore(string templateFile, List<string> materialFiles, bool isBatchMode, string format, string rotation = null, string mirror = null)
         {
-            string separator = string.IsNullOrWhiteSpace(txtSeparator.Text) ? "-" : txtSeparator.Text;
+            string separator = GetOutputSeparator();
             TemplateCompositeMode compositeMode = TemplateCompositeMode.FullBleed;
             string compositeModeName = "满版模式";
             string exclusionMaskPath = null;
@@ -606,9 +607,9 @@ namespace WindowsFormsApp1
             btnBrowseSave.Click += (s, e) => BrowseFolder(txtSavePath);
 
             startY += rowHeight;
-            var lblSeparator = CreateLabel("分隔符:", startX, startY, labelWidth);
             txtSeparator = CreateTextBox(startX + labelWidth, startY, 50);
-            txtSeparator.Text = "-";
+            txtSeparator.Text = DefaultOutputSeparator;
+            txtSeparator.Visible = false;
 
             var lblFormat = CreateLabel("格式:", startX + 145, startY, 40);
             cmbFormat = CreateComboBox(startX + 190, startY, 80);
@@ -627,7 +628,7 @@ namespace WindowsFormsApp1
 
             var lblMirror = CreateLabel("镜像:", startX + 290, startY, 40);
             cmbMirror = CreateComboBox(startX + 335, startY, 110);
-            cmbMirror.Items.AddRange(new object[] { "无", "水平", "垂直", "水平+垂直" });
+            cmbMirror.Items.AddRange(new object[] { "无", "水平", "垂直" });
             cmbMirror.SelectedIndex = 0;
 
             startY += rowHeight;
@@ -831,7 +832,6 @@ namespace WindowsFormsApp1
                 lblTemplate, txtTemplateFolder, btnBrowseTemplate,
                 lblMaterial, txtMaterialFolder, btnBrowseMaterial,
                 lblSave, txtSavePath, btnBrowseSave,
-                lblSeparator, txtSeparator,
                 lblFormat, cmbFormat,
                 lblRotation, cmbRotation,
                 lblMirror, cmbMirror,
@@ -1267,6 +1267,12 @@ namespace WindowsFormsApp1
         private string FindFirstImage(string folderPath)
         {
             return GetImageFiles(folderPath).FirstOrDefault();
+        }
+
+        private string GetOutputSeparator()
+        {
+            string separator = txtSeparator?.Text;
+            return string.IsNullOrWhiteSpace(separator) ? DefaultOutputSeparator : separator;
         }
 
         private string GetBaseName(string filePath)
