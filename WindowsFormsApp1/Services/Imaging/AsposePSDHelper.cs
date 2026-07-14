@@ -7,6 +7,7 @@ using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Imaging;
 using System.IO;
+using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text;
 using Bitmap = System.Drawing.Bitmap;
@@ -1086,6 +1087,12 @@ namespace WindowsFormsApp1
 
         private static void SaveAsCmykTiffWithExtraChannels(Bitmap bitmap, string outputPath, List<string> channelNames)
         {
+            if (UseStreamingTiffWriter(bitmap))
+            {
+                SaveAsCmykTiffWithExtraChannelsStreaming(bitmap, outputPath, channelNames);
+                return;
+            }
+
             ApplyOutputResolution(bitmap);
             int width = bitmap.Width;
             int height = bitmap.Height;
@@ -1194,6 +1201,182 @@ namespace WindowsFormsApp1
             }
 
             Console.WriteLine($"已输出占位扩展通道 TIFF: {placeholderChannelCount} 个通道{(hasTransparency ? "，并保留透明通道" : string.Empty)}");
+        }
+
+        private static void SaveAsCmykTiffWithExtraChannelsStreaming(Bitmap bitmap, string outputPath, List<string> channelNames)
+        {
+            if (bitmap == null)
+                throw new ArgumentNullException(nameof(bitmap));
+
+            ApplyOutputResolution(bitmap);
+            int width = bitmap.Width;
+            int height = bitmap.Height;
+            var placeholderChannelNames = (channelNames ?? new List<string>())
+                .Select(name => name ?? string.Empty)
+                .ToList();
+
+            bool hasTransparency = HasTransparentPixelsStreaming(bitmap);
+            int placeholderChannelCount = placeholderChannelNames.Count;
+            int extraSampleCount = placeholderChannelCount + (hasTransparency ? 1 : 0);
+            int totalSamples = 4 + extraSampleCount;
+
+            using (Tiff tif = Tiff.Open(outputPath, "w"))
+            {
+                tif.SetField(TiffTag.IMAGEWIDTH, width);
+                tif.SetField(TiffTag.IMAGELENGTH, height);
+                tif.SetField(TiffTag.SAMPLESPERPIXEL, totalSamples);
+                tif.SetField(TiffTag.BITSPERSAMPLE, 8);
+                tif.SetField(TiffTag.ORIENTATION, Orientation.TOPLEFT);
+                tif.SetField(TiffTag.PHOTOMETRIC, Photometric.SEPARATED);
+                tif.SetField(TiffTag.INKSET, InkSet.CMYK);
+                tif.SetField(TiffTag.PLANARCONFIG, PlanarConfig.CONTIG);
+                tif.SetField(TiffTag.COMPRESSION, Compression.LZW);
+                tif.SetField(TiffTag.RESOLUTIONUNIT, 2);
+                tif.SetField(TiffTag.XRESOLUTION, 300.0);
+                tif.SetField(TiffTag.YRESOLUTION, 300.0);
+                tif.SetField(TiffTag.ROWSPERSTRIP, Math.Min(height, 128));
+                tif.SetField(TiffTag.IMAGEDESCRIPTION,
+                    $"Placeholder TIFF extra channels: {string.Join(", ", placeholderChannelNames)}");
+
+                var photoshopChannelNames = new List<string>();
+                if (hasTransparency)
+                    photoshopChannelNames.Add("Alpha");
+                photoshopChannelNames.AddRange(placeholderChannelNames);
+                TryWritePhotoshopChannelNames(tif, photoshopChannelNames);
+
+                if (extraSampleCount > 0)
+                {
+                    short[] extraSamples = new short[extraSampleCount];
+                    int extraIndex = 0;
+                    if (hasTransparency)
+                        extraSamples[extraIndex++] = (short)ExtraSample.UNASSALPHA;
+
+                    while (extraIndex < extraSampleCount)
+                        extraSamples[extraIndex++] = (short)ExtraSample.UNSPECIFIED;
+
+                    tif.SetField(TiffTag.EXTRASAMPLES, extraSampleCount, extraSamples);
+                }
+
+                WriteCmykTiffScanlinesStreaming(tif, bitmap, width, height, totalSamples, placeholderChannelCount, hasTransparency);
+            }
+        }
+
+        private static bool UseStreamingTiffWriter(Bitmap bitmap)
+        {
+            return true;
+        }
+
+        private static bool HasTransparentPixelsStreaming(Bitmap bitmap)
+        {
+            Rectangle bounds = new Rectangle(0, 0, bitmap.Width, bitmap.Height);
+            BitmapData bitmapData = bitmap.LockBits(bounds, ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
+
+            try
+            {
+                int stride = bitmapData.Stride;
+                int rowBytes = bitmap.Width * 4;
+                byte[] row = new byte[rowBytes];
+
+                for (int y = 0; y < bitmap.Height; y++)
+                {
+                    IntPtr rowPtr = stride >= 0
+                        ? IntPtr.Add(bitmapData.Scan0, y * stride)
+                        : IntPtr.Add(bitmapData.Scan0, (bitmap.Height - 1 - y) * -stride);
+                    Marshal.Copy(rowPtr, row, 0, rowBytes);
+
+                    for (int x = 0; x < bitmap.Width; x++)
+                    {
+                        if (row[x * 4 + 3] < 255)
+                            return true;
+                    }
+                }
+
+                return false;
+            }
+            finally
+            {
+                bitmap.UnlockBits(bitmapData);
+            }
+        }
+
+        private static void WriteCmykTiffScanlinesStreaming(
+            Tiff tif,
+            Bitmap bitmap,
+            int width,
+            int height,
+            int totalSamples,
+            int placeholderChannelCount,
+            bool hasTransparency)
+        {
+            Rectangle bounds = new Rectangle(0, 0, width, height);
+            BitmapData bitmapData = bitmap.LockBits(bounds, ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
+
+            try
+            {
+                int stride = bitmapData.Stride;
+                int sourceRowBytes = width * 4;
+                byte[] sourceRow = new byte[sourceRowBytes];
+                byte[] scanline = new byte[width * totalSamples];
+
+                for (int y = 0; y < height; y++)
+                {
+                    IntPtr rowPtr = stride >= 0
+                        ? IntPtr.Add(bitmapData.Scan0, y * stride)
+                        : IntPtr.Add(bitmapData.Scan0, (height - 1 - y) * -stride);
+                    Marshal.Copy(rowPtr, sourceRow, 0, sourceRowBytes);
+
+                    for (int x = 0; x < width; x++)
+                    {
+                        int sourceIdx = x * 4;
+                        int destIdx = x * totalSamples;
+                        byte b = sourceRow[sourceIdx + 0];
+                        byte g = sourceRow[sourceIdx + 1];
+                        byte r = sourceRow[sourceIdx + 2];
+                        byte alpha = sourceRow[sourceIdx + 3];
+
+                        ConvertRgbToCmyk(r, g, b,
+                            out scanline[destIdx + 0],
+                            out scanline[destIdx + 1],
+                            out scanline[destIdx + 2],
+                            out scanline[destIdx + 3]);
+
+                        int extraChannelIndex = 4;
+                        if (hasTransparency)
+                            scanline[destIdx + extraChannelIndex++] = alpha;
+
+                        for (int i = 0; i < placeholderChannelCount; i++)
+                        {
+                            scanline[destIdx + extraChannelIndex++] = alpha;
+                        }
+                    }
+
+                    tif.WriteScanline(scanline, y);
+                }
+            }
+            finally
+            {
+                bitmap.UnlockBits(bitmapData);
+            }
+        }
+
+        private static void ConvertRgbToCmyk(byte r, byte g, byte b, out byte c, out byte m, out byte y, out byte k)
+        {
+            int max = Math.Max(r, Math.Max(g, b));
+            int black = 255 - max;
+            k = (byte)black;
+
+            if (black >= 255)
+            {
+                c = 0;
+                m = 0;
+                y = 0;
+                return;
+            }
+
+            int denominator = 255 - black;
+            c = (byte)((255 - r - black) * 255 / denominator);
+            m = (byte)((255 - g - black) * 255 / denominator);
+            y = (byte)((255 - b - black) * 255 / denominator);
         }
 
         private static void TryWritePhotoshopChannelNames(Tiff tif, List<string> extraChannelNames)

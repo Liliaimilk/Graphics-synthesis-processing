@@ -58,6 +58,9 @@ namespace WindowsFormsApp1
         private const string WhiteInkChannelName = "通道1";
         private const string VarnishChannelName = "通道2";
 
+        private const int MaxBitmapDimensionPx = 65000;
+        private const long MaxCanvasBytes = 1024L * 1024L * 1024L;
+
         public static PreparedLayout PrepareLayout(SheetLayoutSettings settings)
         {
             if (settings == null)
@@ -88,6 +91,8 @@ namespace WindowsFormsApp1
             int gapX = MmToPixels(settings.HorizontalGapMm, settings.Dpi);
             int gapY = MmToPixels(settings.VerticalGapMm, settings.Dpi);
 
+            ValidateCanvasCapacity(canvasWidth, canvasHeight);
+
             int lastRight = startX + settings.Columns * slotWidth + Math.Max(0, settings.Columns - 1) * gapX;
             int lastBottom = startY + settings.Rows * slotHeight + Math.Max(0, settings.Rows - 1) * gapY;
 
@@ -115,6 +120,27 @@ namespace WindowsFormsApp1
             }
 
             return result;
+        }
+
+        private static void ValidateCanvasCapacity(int canvasWidth, int canvasHeight)
+        {
+            long pixelCount = (long)canvasWidth * canvasHeight;
+            long rawBytes = pixelCount * 4L;
+            double rawGb = rawBytes / 1024d / 1024d / 1024d;
+
+            if (canvasWidth > MaxBitmapDimensionPx || canvasHeight > MaxBitmapDimensionPx)
+            {
+                throw new InvalidOperationException(
+                    $"当前排版尺寸过大：{canvasWidth}×{canvasHeight}px，单边像素超过 {MaxBitmapDimensionPx}px。" +
+                    " 当前 System.Drawing 单画布流程无法稳定输出这种超长图，请降低 DPI、拆分高度，或改成分块 TIFF 输出。");
+            }
+
+            if (rawBytes > MaxCanvasBytes)
+            {
+                throw new InvalidOperationException(
+                    $"当前排版尺寸过大：{canvasWidth}×{canvasHeight}px，32 位画布裸内存约 {rawGb:F2}GB。" +
+                    " 后续 TIFF 转换和专色通道还会继续增加内存占用，请降低 DPI、拆分版面，或改成分块 TIFF 输出。");
+            }
         }
 
         public static List<string> GetImageFiles(string folderPath)
