@@ -1432,10 +1432,6 @@ namespace WindowsFormsApp1
 
                 data.Add((byte)nameBytes.Length);
                 data.AddRange(nameBytes);
-
-                int recordLength = 1 + nameBytes.Length;
-                if ((recordLength % 2) != 0)
-                    data.Add(0x00);
             }
 
             return BuildPhotoshopResourceBlock(0x03EE, data);
