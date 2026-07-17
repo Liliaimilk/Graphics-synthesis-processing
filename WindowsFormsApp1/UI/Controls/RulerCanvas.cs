@@ -160,17 +160,20 @@ namespace WindowsFormsApp1
             ApplyMenuStyle(_canvasContextMenu);
         }
 
+        /// <summary>切换画布背景样式并请求重绘。</summary>
         public void SetBackgroundStyle(BackgroundStyle style)
         {
             _bgStyle = style;
             Invalidate();
         }
 
+        /// <summary>返回当前画布背景样式。</summary>
         public BackgroundStyle GetBackgroundStyle() => _bgStyle;
 
         /// <summary>
         /// 应用菜单样式，保留默认背景并将悬停高亮改为蓝色。
         /// </summary>
+        /// <summary>统一配置右键菜单的常规、悬停和文字颜色。</summary>
         private static void ApplyMenuStyle(ContextMenuStrip menu)
         {
             if (menu == null)
@@ -204,17 +207,20 @@ namespace WindowsFormsApp1
             }
         }
 
+        /// <summary>清空现有场景后载入单张内存位图。</summary>
         public void LoadImage(Bitmap bitmap)
         {
             ClearScene();
             AddImage(bitmap);
         }
 
+        /// <summary>向当前场景追加位图，并从位图元数据读取 DPI。</summary>
         public void AddImage(Bitmap bitmap)
         {
             AddImage(bitmap, bitmap?.HorizontalResolution ?? DPI, bitmap?.VerticalResolution ?? DPI, "未命名图片");
         }
 
+        /// <summary>创建画布图片项，记录真实 DPI、名称和默认摆放位置。</summary>
         private void AddImage(Bitmap bitmap, float horizontalDpi, float verticalDpi, string imageName)
         {
             if (bitmap == null)
@@ -245,6 +251,7 @@ namespace WindowsFormsApp1
             Invalidate();
         }
 
+        /// <summary>释放所有已加载位图、辅助线与选择状态，恢复空画布。</summary>
         public void ClearScene()
         {
             foreach (CanvasImageItem item in _images)
@@ -263,11 +270,13 @@ namespace WindowsFormsApp1
             Invalidate();
         }
 
+        /// <summary>兼容旧调用的清空图片入口，实际清空整个场景。</summary>
         public void ClearImage()
         {
             ClearScene();
         }
 
+        /// <summary>重置缩放与平移，并将当前图片集合适配到可视区域。</summary>
         public void ResetView()
         {
             FitSceneToViewport();
@@ -276,6 +285,7 @@ namespace WindowsFormsApp1
             Invalidate();
         }
 
+        /// <summary>设置缩放比例，并以当前视口中心保持画布位置稳定。</summary>
         public void SetZoom(float zoom)
         {
             if (_images.Count == 0)
@@ -303,6 +313,7 @@ namespace WindowsFormsApp1
 
         public float Zoom => _zoom;
 
+        /// <summary>识别拖入的文件列表，仅对支持的图片文件显示复制光标。</summary>
         protected override void OnDragEnter(DragEventArgs drgevent)
         {
             base.OnDragEnter(drgevent);
@@ -318,6 +329,7 @@ namespace WindowsFormsApp1
             drgevent.Effect = DragDropEffects.None;
         }
 
+        /// <summary>接收拖放图片，并按单图或多图水平平铺方式加载。</summary>
         protected override void OnDragDrop(DragEventArgs drgevent)
         {
             base.OnDragDrop(drgevent);
@@ -359,6 +371,7 @@ namespace WindowsFormsApp1
             }
         }
 
+        /// <summary>从文件读取单张图片并追加到当前画布。</summary>
         public void LoadImageFromFile(string filePath)
         {
             try
@@ -372,6 +385,7 @@ namespace WindowsFormsApp1
             }
         }
         // 水平加载多张图片
+        /// <summary>批量读取图片后按数量和比例水平排布，避免图片重叠。</summary>
         public void LoadImagesHorizontally(IEnumerable<string> filePaths)
         {
             List<string> paths = (filePaths ?? Enumerable.Empty<string>())
@@ -407,6 +421,7 @@ namespace WindowsFormsApp1
             }
         }
 
+        /// <summary>按背景、图片、标尺、辅助线和十字光标的顺序渲染画布。</summary>
         protected override void OnPaint(PaintEventArgs e)
         {
             base.OnPaint(e);
@@ -429,6 +444,7 @@ namespace WindowsFormsApp1
             DrawCrosshair(g);
         }
 
+        /// <summary>处理滚轮缩放，并以鼠标位置为锚点避免视图跳动。</summary>
         protected override void OnMouseWheel(MouseEventArgs e)
         {
             base.OnMouseWheel(e);
@@ -480,6 +496,7 @@ namespace WindowsFormsApp1
             Invalidate();
         }
 
+        /// <summary>开始图片拖动、画布平移、辅助线拖动或右键菜单命中处理。</summary>
         protected override void OnMouseDown(MouseEventArgs e)
         {
             base.OnMouseDown(e);
@@ -528,6 +545,7 @@ namespace WindowsFormsApp1
             Cursor = Cursors.SizeAll;
         }
 
+        /// <summary>根据当前鼠标操作实时更新图片位置、平移偏移或辅助线坐标。</summary>
         protected override void OnMouseMove(MouseEventArgs e)
         {
             base.OnMouseMove(e);
@@ -565,6 +583,7 @@ namespace WindowsFormsApp1
             Invalidate();
         }
 
+        /// <summary>结束当前鼠标拖动状态并恢复空闲光标。</summary>
         protected override void OnMouseUp(MouseEventArgs e)
         {
             base.OnMouseUp(e);
@@ -574,6 +593,7 @@ namespace WindowsFormsApp1
             UpdateIdleCursor(e.Location);
         }
 
+        /// <summary>控件尺寸变化后重新计算滚动范围并限制平移边界。</summary>
         protected override void OnResize(EventArgs e)
         {
             base.OnResize(e);
@@ -582,6 +602,7 @@ namespace WindowsFormsApp1
             Invalidate();
         }
 
+        /// <summary>将水平滚动条值转换为画布世界坐标平移。</summary>
         private void HScroll_ValueChanged(object sender, EventArgs e)
         {
             if (_images.Count == 0)
@@ -595,6 +616,7 @@ namespace WindowsFormsApp1
             Invalidate();
         }
 
+        /// <summary>将垂直滚动条值转换为画布世界坐标平移。</summary>
         private void VScroll_ValueChanged(object sender, EventArgs e)
         {
             if (_images.Count == 0)
@@ -608,6 +630,7 @@ namespace WindowsFormsApp1
             Invalidate();
         }
 
+        /// <summary>根据当前平移偏移反向同步两个滚动条，防止视图与滚动位置脱节。</summary>
         private void SyncScrollBarsFromOffset()
         {
             if (_images.Count == 0)
@@ -641,6 +664,7 @@ namespace WindowsFormsApp1
         /// <summary>
         /// 处理画布图片的右键菜单逻辑。
         /// </summary>
+        /// <summary>区分图片与空白区域，显示删除图片或画布级右键菜单。</summary>
         private void HandleRightClick(MouseEventArgs e)
         {
             CanvasImageItem hitImage = HitTestImage(e.Location);
@@ -722,6 +746,7 @@ namespace WindowsFormsApp1
             ResetView();
         }
 
+        /// <summary>根据场景边界、缩放和视口尺寸更新滚动条可见性及范围。</summary>
         private void UpdateScrollBars()
         {
             if (_images.Count == 0)
@@ -768,6 +793,7 @@ namespace WindowsFormsApp1
             SyncScrollBarsFromOffset();
         }
 
+        /// <summary>绘制纯色、棋盘格等透明画布背景。</summary>
         private void DrawBackground(Graphics g)
         {
             g.Clear(Color.FromArgb(25, 25, 30));
@@ -786,6 +812,7 @@ namespace WindowsFormsApp1
             }
         }
 
+        /// <summary>按图层顺序绘制所有图片，并突出当前选中项的边框和控制点。</summary>
         private void DrawImages(Graphics g)
         {
             if (_images.Count == 0)
@@ -846,6 +873,7 @@ namespace WindowsFormsApp1
             g.Restore(state);
         }
 
+        /// <summary>绘制顶部和左侧毫米标尺及交叉原点区域。</summary>
         private void DrawRulers(Graphics g)
         {
             using (SolidBrush bgBrush = new SolidBrush(Color.FromArgb(50, 50, 55)))
@@ -867,6 +895,7 @@ namespace WindowsFormsApp1
             }
         }
 
+        /// <summary>按当前缩放绘制横向刻度、主刻度标签和基线。</summary>
         private void DrawXAxis(Graphics g, SolidBrush textBrush, Pen linePen, Font tickFont)
         {
             Rectangle viewportBounds = GetViewportBounds();
@@ -915,6 +944,7 @@ namespace WindowsFormsApp1
             }
         }
 
+        /// <summary>按当前缩放绘制纵向刻度、主刻度标签和基线。</summary>
         private void DrawYAxis(Graphics g, SolidBrush textBrush, Pen linePen, Font tickFont)
         {
             Rectangle viewportBounds = GetViewportBounds();
@@ -995,6 +1025,7 @@ namespace WindowsFormsApp1
             return valueMm.ToString();
         }
 
+        /// <summary>绘制用户拖出的横向和纵向辅助线。</summary>
         private void DrawGuides(Graphics g)
         {
             Rectangle viewportBounds = GetViewportBounds();
@@ -1029,6 +1060,7 @@ namespace WindowsFormsApp1
             }
         }
 
+        /// <summary>在标尺区域和画布中绘制当前鼠标位置十字指示。</summary>
         private void DrawCrosshair(Graphics g)
         {
             Rectangle viewportBounds = GetViewportBounds();
@@ -1045,6 +1077,7 @@ namespace WindowsFormsApp1
             }
         }
 
+        /// <summary>根据每毫米像素数选择合适的标尺主刻度间隔。</summary>
         private int GetAdaptiveInterval(float pixelPerMm)
         {
             if (pixelPerMm * 1 >= 30) return 1;
@@ -1054,6 +1087,7 @@ namespace WindowsFormsApp1
             return 100;
         }
 
+        /// <summary>预生成透明背景使用的棋盘格纹理，避免每帧重复创建。</summary>
         private void CreateCheckerboard()
         {
             _checkerboard = new Bitmap(16, 16);
@@ -1068,12 +1102,14 @@ namespace WindowsFormsApp1
             }
         }
 
+        /// <summary>判断路径扩展名是否为画布支持的图片格式。</summary>
         private bool IsImageFile(string path)
         {
             string ext = Path.GetExtension(path).ToLowerInvariant();
             return ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".bmp" || ext == ".gif" || ext == ".tif" || ext == ".tiff";
         }
 
+        /// <summary>统一读取普通图片与 TIFF，并返回脱离文件句柄的位图和 DPI 信息。</summary>
         private LoadedBitmapResult LoadBitmapFromFile(string filePath)
         {
             try
@@ -1112,12 +1148,14 @@ namespace WindowsFormsApp1
             }
         }
 
+        /// <summary>判断文件是否需要走 TIFF 专用读取链路。</summary>
         private bool IsTiffFile(string path)
         {
             string ext = Path.GetExtension(path).ToLowerInvariant();
             return ext == ".tif" || ext == ".tiff";
         }
 
+        /// <summary>使用 Magick.NET 读取复杂 TIFF，优先保留色彩和分辨率元数据。</summary>
         private LoadedBitmapResult LoadBitmapWithMagick(string filePath)
         {
             EnsureMagickNetInitialized();
@@ -1159,6 +1197,7 @@ namespace WindowsFormsApp1
             }
         }
 
+        /// <summary>使用 LibTiff 作为 TIFF 读取兜底，处理 Magick.NET 无法打开的文件。</summary>
         private LoadedBitmapResult LoadBitmapWithLibTiff(string filePath)
         {
             using (Tiff tif = Tiff.Open(filePath, "r"))
@@ -1217,6 +1256,7 @@ namespace WindowsFormsApp1
             }
         }
 
+        /// <summary>确保 Magick.NET 的一次性初始化在多次 TIFF 读取前完成。</summary>
         private void EnsureMagickNetInitialized()
         {
             if (_magickInitialized)
@@ -1249,6 +1289,7 @@ namespace WindowsFormsApp1
                 Math.Max(0, Height - RULER_SIZE - (_hScroll.Visible ? SCROLLBAR_SIZE : 0)));
         }
 
+        /// <summary>合并所有图片边界，计算当前世界坐标场景的最小包围矩形。</summary>
         private RectangleF GetSceneBounds()
         {
             if (_images.Count == 0)
@@ -1265,6 +1306,7 @@ namespace WindowsFormsApp1
             return bounds;
         }
 
+        /// <summary>按可用宽度和图片比例安排多张图片的水平位置与初始缩放。</summary>
         private void AddImagesHorizontally(IReadOnlyList<LoadedBitmapResult> bitmaps)
         {
             if (bitmaps == null || bitmaps.Count == 0)
@@ -1316,6 +1358,7 @@ namespace WindowsFormsApp1
                 item.Image.Height * _zoom);
         }
 
+        /// <summary>将控件屏幕坐标反算为画布世界坐标，供拖动和命中测试共用。</summary>
         private PointF ScreenToWorld(PointF screenPoint)
         {
             return new PointF(
@@ -1323,6 +1366,7 @@ namespace WindowsFormsApp1
                 (screenPoint.Y - _panOffset.Y) / _zoom);
         }
 
+        /// <summary>从顶层向下检测指定屏幕点命中的图片。</summary>
         private CanvasImageItem HitTestImage(Point screenPoint)
         {
             PointF worldPoint = ScreenToWorld(screenPoint);
@@ -1349,6 +1393,7 @@ namespace WindowsFormsApp1
             Cursor = Cursors.Default;
         }
 
+        /// <summary>更新选中图片，并可选择将其提升到最前绘制层。</summary>
         private void SelectImage(CanvasImageItem item, bool bringToFront)
         {
             foreach (CanvasImageItem image in _images)
@@ -1390,6 +1435,7 @@ namespace WindowsFormsApp1
             });
         }
 
+        /// <summary>计算适配缩放比例，使完整场景在可视区域内居中显示。</summary>
         private void FitSceneToViewport()
         {
             if (_images.Count == 0)
@@ -1453,6 +1499,7 @@ namespace WindowsFormsApp1
             return topAlignedPan - scrollValue;
         }
 
+        /// <summary>限制画布平移范围，防止场景被拖离可视区域过远。</summary>
         private void ClampPanOffset()
         {
             if (_images.Count == 0)
@@ -1478,6 +1525,7 @@ namespace WindowsFormsApp1
                 Math.Max(minPanY, Math.Min(maxPanY, _panOffset.Y)));
         }
 
+        /// <summary>限制拖动中的图片位置，确保其不会完全移出画布可操作范围。</summary>
         private void ClampSelectedImageToViewport(CanvasImageItem item)
         {
             if (item == null)
@@ -1533,6 +1581,7 @@ namespace WindowsFormsApp1
             return null;
         }
 
+        /// <summary>将鼠标位置换算为毫米坐标并更新被拖动辅助线。</summary>
         private void UpdateGuidePosition(GuideLine guide, Point screenPoint)
         {
             Rectangle viewportBounds = GetViewportBounds();

@@ -60,6 +60,10 @@ namespace WindowsFormsApp1
             }
         }
 
+        /// <summary>
+        /// 执行模板与素材的套图合成，并按目标格式写出最终文件。
+        /// 该流程负责读取透明像素、满版/标准排版、镜像旋转及专色通道导出。
+        /// </summary>
         public static void ProcessTifMode(
             string templateTifPath,
             string materialTifPath,
@@ -191,6 +195,9 @@ namespace WindowsFormsApp1
         }
 
         // 镜像
+        /// <summary>
+        /// 根据指定方向创建图像镜像副本；未指定有效方向时直接返回原对象。
+        /// </summary>
         private static Bitmap ApplyMirror(Bitmap source, string mirror)
         {
             if (source == null)
@@ -222,6 +229,9 @@ namespace WindowsFormsApp1
         }
 
         // 旋转
+        /// <summary>
+        /// 根据角度创建旋转副本，并同步保留统一的输出 DPI。
+        /// </summary>
         private static Bitmap ApplyRotation(Bitmap source, string rotation)
         {
             if (source == null)
@@ -260,21 +270,33 @@ namespace WindowsFormsApp1
             return result;
         }
 
+        /// <summary>
+        /// 读取排版画布使用的位图，并尽可能保留源文件的颜色与透明信息。
+        /// </summary>
         public static Bitmap LoadBitmapForLayout(string imagePath)
         {
             return LoadBitmapPreserveColor(imagePath);
         }
 
+        /// <summary>
+        /// 将位图导出为不带额外专色通道的 CMYK TIFF。
+        /// </summary>
         public static void SaveBitmapAsFlatTiff(Bitmap bitmap, string outputPath)
         {
             SaveAsCmykTiff(bitmap, outputPath);
         }
 
+        /// <summary>
+        /// 将位图导出为带命名额外通道的 CMYK TIFF，供白墨、光油等专色流程使用。
+        /// </summary>
         public static void SaveBitmapAsTiffWithSpotChannels(Bitmap bitmap, string outputPath, List<string> channelNames)
         {
             SaveAsTiffWithSpotChannels(bitmap, outputPath, channelNames);
         }
 
+        /// <summary>
+        /// 将统一像素数据重新封装为可绘制位图，避免不同文件格式走不同画布路径。
+        /// </summary>
         private static Bitmap LoadBitmapPreserveColor(string imagePath)
         {
             var pixelData = LoadImagePixelData(imagePath);
@@ -320,6 +342,9 @@ namespace WindowsFormsApp1
             return new ImagePixelData(source.Width, source.Height, clonedPixels);
         }
 
+        /// <summary>
+        /// 按文件类型读取 ARGB 像素；TIFF 使用专用读取链路以优先恢复透明区域。
+        /// </summary>
         private static ImagePixelData LoadImagePixelData(string imagePath)
         {
             var ext = Path.GetExtension(imagePath).ToLowerInvariant();
@@ -348,6 +373,9 @@ namespace WindowsFormsApp1
             }
         }
 
+        /// <summary>
+        /// 读取 TIFF 像素并按图层、原始透明度、白底抠图三个层级尝试恢复可见区域。
+        /// </summary>
         private static ImagePixelData LoadTiffPixelData(string tifPath)
         {
             var layeredData = TryLoadTiffLayerPixelData(tifPath);
@@ -369,6 +397,9 @@ namespace WindowsFormsApp1
             return pixelData;
         }
 
+        /// <summary>
+        /// 依次使用 Aspose、Magick.NET 与 LibTiff 读取 TIFF 栅格，保证格式兼容性。
+        /// </summary>
         private static ImagePixelData TryLoadTiffRasterPixelData(string tifPath)
         {
             try
@@ -420,6 +451,9 @@ namespace WindowsFormsApp1
             }
         }
 
+        /// <summary>
+        /// 当 TIFF 丢失透明度且背景为白色时，尝试将接近白色的像素恢复为透明。
+        /// </summary>
         private static ImagePixelData TryLoadTiffPixelDataWithWhiteMask(string tifPath)
         {
             try
@@ -459,6 +493,9 @@ namespace WindowsFormsApp1
             }
         }
 
+        /// <summary>
+        /// 尝试从包含 Photoshop 图层信息的 TIFF 中重建透明画布，忽略整画布背景层。
+        /// </summary>
         private static ImagePixelData TryLoadTiffLayerPixelData(string tifPath)
         {
             try
@@ -532,6 +569,9 @@ namespace WindowsFormsApp1
             }
         }
 
+        /// <summary>
+        /// 使用 LockBits 高效读取 32 位 ARGB 位图，转换为便于合成的整型像素数组。
+        /// </summary>
         private static ImagePixelData ExtractPixelData(Bitmap bitmap)
         {
             if (bitmap == null)
@@ -572,6 +612,9 @@ namespace WindowsFormsApp1
             }
         }
 
+        /// <summary>
+        /// 将 ARGB 整型像素数组写入新的 32 位位图，用于合成结果和画布显示。
+        /// </summary>
         private static Bitmap CreateBitmapFromArgbPixels(int width, int height, int[] argbPixels)
         {
             var bitmap = new Bitmap(width, height, PixelFormat.Format32bppArgb);
@@ -615,6 +658,9 @@ namespace WindowsFormsApp1
             }
         }
 
+        /// <summary>
+        /// 标准套图：按素材原坐标和偏移量，将非透明像素混合到模板画布。
+        /// </summary>
         private static void DrawNonTransparentPixels(
             ImagePixelData background,
             ImagePixelData foreground,
@@ -665,6 +711,9 @@ namespace WindowsFormsApp1
 
 
         // 贴合区域大小及比例操作
+        /// <summary>
+        /// 满版套图：按模板可打印区域等比放大素材，并跳过摄像头等排除区域。
+        /// </summary>
         private static void DrawFullBleedPixels(
             ImagePixelData background,
             ImagePixelData foreground,
@@ -739,6 +788,9 @@ namespace WindowsFormsApp1
             }
         }
 
+        /// <summary>
+        /// 判断目标坐标是否命中排除遮罩中的深色区域，用于保护摄像头等不可打印位置。
+        /// </summary>
         private static bool IsExcludedByMask(
             ImagePixelData exclusionMask,
             int x,
@@ -772,6 +824,9 @@ namespace WindowsFormsApp1
             return brightness < 128;
         }
 
+        /// <summary>
+        /// 将单个图层的可见像素按其画布偏移混合到目标透明画布。
+        /// </summary>
         private static void DrawLayerPixels(ImagePixelData background, LayerPixelData layerData)
         {
             if (background == null)
@@ -803,6 +858,9 @@ namespace WindowsFormsApp1
             }
         }
 
+        /// <summary>
+        /// 以 SourceOver 规则混合单像素，保留半透明边缘的正确颜色和透明度。
+        /// </summary>
         private static void BlendPixel(int[] backgroundPixels, int backgroundIndex, int sourcePixel)
         {
             byte sourceA = (byte)((sourcePixel >> 24) & 0xFF);
@@ -839,6 +897,9 @@ namespace WindowsFormsApp1
             backgroundPixels[backgroundIndex] = (outA << 24) | (outR << 16) | (outG << 8) | outB;
         }
         //遍历元素，去除空白
+        /// <summary>
+        /// 扫描 ARGB 像素的非透明边界，作为素材裁切和缩放的有效内容范围。
+        /// </summary>
         private static Rectangle GetOpaqueBounds(int[] argbPixels, int width, int height)
         {
             int minX = width;
@@ -867,6 +928,9 @@ namespace WindowsFormsApp1
             return Rectangle.FromLTRB(minX, minY, maxX + 1, maxY + 1);
         }
 
+        /// <summary>
+        /// 统计非透明像素数量，用于记录素材透明度读取是否正常。
+        /// </summary>
         private static int CountOpaquePixels(int[] argbPixels)
         {
             int count = 0;
@@ -878,6 +942,9 @@ namespace WindowsFormsApp1
             return count;
         }
 
+        /// <summary>
+        /// 使用 LibTiff 的低层扫描线读取作为最终 TIFF 兼容性兜底路径。
+        /// </summary>
         private static Bitmap LoadTiffToBitmap(string tifPath)
         {
             using (var tif = Tiff.Open(tifPath, "r"))
@@ -988,6 +1055,9 @@ namespace WindowsFormsApp1
             }
         }
 
+        /// <summary>
+        /// 根据用户选择的格式保存套图结果，并仅在 TIFF 中写入额外专色通道。
+        /// </summary>
         private static void SaveMergedAsFormat(Bitmap bitmap, string outputPath, string format, List<string> channelNames)
         {
             if (bitmap == null)
@@ -1020,11 +1090,17 @@ namespace WindowsFormsApp1
             }
         }
 
+        /// <summary>
+        /// 明确拒绝当前尚未实现的真实 PSD 导出，避免生成伪 PSD 文件。
+        /// </summary>
         private static void SaveAsPsd(Bitmap bitmap, string outputPath)
         {
             throw new NotSupportedException("当前版本暂不支持真实 PSD 导出，请改用 TIF、PNG 或 JPEG。");
         }
 
+        /// <summary>
+        /// 根据通道名称列表选择普通 CMYK TIFF 或带额外通道的 TIFF 写入流程。
+        /// </summary>
         private static void SaveAsTiffWithSpotChannels(Bitmap bitmap, string outputPath, List<string> channelNames)
         {
             if (bitmap == null)
@@ -1042,6 +1118,9 @@ namespace WindowsFormsApp1
             SaveAsCmykTiffWithExtraChannels(bitmap, outputPath, channelNames);
         }
 
+        /// <summary>
+        /// 通过 Magick.NET 将位图转换为标准 CMYK TIFF，不附带额外通道。
+        /// </summary>
         private static void SaveAsCmykTiff(Bitmap bitmap, string outputPath)
         {
             ApplyOutputResolution(bitmap);
@@ -1085,6 +1164,9 @@ namespace WindowsFormsApp1
             public byte Opacity { get; set; }
         }
 
+        /// <summary>
+        /// 导出带白墨、光油等额外通道的 CMYK TIFF；大图默认走逐行流式写入以控制内存。
+        /// </summary>
         private static void SaveAsCmykTiffWithExtraChannels(Bitmap bitmap, string outputPath, List<string> channelNames)
         {
             if (UseStreamingTiffWriter(bitmap))
@@ -1177,7 +1259,8 @@ namespace WindowsFormsApp1
                                 int destIdx = x * totalSamples;
                                 var pixel = pixels.GetPixel(x, y);
                                 byte alpha = (byte)((sourceData.Pixels[pixelIndex] >> 24) & 0xFF);
-                                byte placeholderValue = alpha;
+                                // 当前打印流程以黑色表示上专色、白色表示不上专色。相反则是 byte placeholderValue = alpha;下面同理
+                                byte placeholderValue = (byte)(255 - alpha);
 
                                 scanline[destIdx + 0] = pixel.GetChannel(0);
                                 scanline[destIdx + 1] = pixel.GetChannel(1);
@@ -1203,6 +1286,9 @@ namespace WindowsFormsApp1
             Console.WriteLine($"已输出占位扩展通道 TIFF: {placeholderChannelCount} 个通道{(hasTransparency ? "，并保留透明通道" : string.Empty)}");
         }
 
+        /// <summary>
+        /// 逐行写入 CMYK 与额外通道，避免一次性构建整张大图的像素数组导致内存溢出。
+        /// </summary>
         private static void SaveAsCmykTiffWithExtraChannelsStreaming(Bitmap bitmap, string outputPath, List<string> channelNames)
         {
             if (bitmap == null)
@@ -1261,11 +1347,17 @@ namespace WindowsFormsApp1
             }
         }
 
+        /// <summary>
+        /// 决定是否启用流式 TIFF 写入；当前统一启用以保证大图输出稳定。
+        /// </summary>
         private static bool UseStreamingTiffWriter(Bitmap bitmap)
         {
             return true;
         }
 
+        /// <summary>
+        /// 按行检测 Alpha，决定 TIFF 是否需要额外写入透明通道。
+        /// </summary>
         private static bool HasTransparentPixelsStreaming(Bitmap bitmap)
         {
             Rectangle bounds = new Rectangle(0, 0, bitmap.Width, bitmap.Height);
@@ -1299,6 +1391,10 @@ namespace WindowsFormsApp1
             }
         }
 
+        /// <summary>
+        /// 将 ARGB 源图逐行转换为 CMYK，并同步写入 Alpha 和普通专色通道。
+        /// 专色通道采用黑色上墨、白色不上墨的当前打印极性。
+        /// </summary>
         private static void WriteCmykTiffScanlinesStreaming(
             Tiff tif,
             Bitmap bitmap,
@@ -1355,7 +1451,8 @@ namespace WindowsFormsApp1
 
                         for (int i = 0; i < placeholderChannelCount; i++)
                         {
-                            scanline[destIdx + extraChannelIndex++] = alpha;
+                            // 当前打印流程以黑色表示上专色、白色表示不上专色。
+                            scanline[destIdx + extraChannelIndex++] = (byte)(255 - alpha);
                         }
                     }
 
@@ -1371,11 +1468,17 @@ namespace WindowsFormsApp1
         /// <summary>
         /// 将一个半透明色彩分量按白色底板预合成，透明度仍由 TIFF Alpha 通道单独保存。
         /// </summary>
+        /// <summary>
+        /// 将半透明颜色分量与白色底板预合成，避免透明 RGB 零值在 CMYK 中转成黑底。
+        /// </summary>
         private static byte CompositeChannelOverWhite(byte channel, byte alpha)
         {
             return (byte)((channel * alpha + 255 * (255 - alpha) + 127) / 255);
         }
 
+        /// <summary>
+        /// 使用基础 RGB 转 CMYK 公式生成 8 位 CMYK 分量，供底层 TIFF 扫描线写入。
+        /// </summary>
         private static void ConvertRgbToCmyk(byte r, byte g, byte b, out byte c, out byte m, out byte y, out byte k)
         {
             int max = Math.Max(r, Math.Max(g, b));
@@ -1396,6 +1499,9 @@ namespace WindowsFormsApp1
             y = (byte)((255 - b - black) * 255 / denominator);
         }
 
+        /// <summary>
+        /// 将 Photoshop 通道名称资源写入 TIFF；失败时不阻断图像导出。
+        /// </summary>
         private static void TryWritePhotoshopChannelNames(Tiff tif, List<string> extraChannelNames)
         {
             if (tif == null || extraChannelNames == null || extraChannelNames.Count == 0)
@@ -1413,6 +1519,9 @@ namespace WindowsFormsApp1
             }
         }
 
+        /// <summary>
+        /// 组装 TIFF 私有标签 34377 所需的 Photoshop 图像资源块。
+        /// </summary>
         private static byte[] BuildPhotoshopImageResourceBlock(List<string> extraChannelNames)
         {
             var block = new List<byte>();
@@ -1420,6 +1529,9 @@ namespace WindowsFormsApp1
             return block.ToArray();
         }
 
+        /// <summary>
+        /// 按 Photoshop 0x03EE 资源格式，将通道名编码为连续 Pascal 字符串。
+        /// </summary>
         private static byte[] BuildPascalChannelNamesResource(List<string> extraChannelNames)
         {
             var data = new List<byte>();
@@ -1437,6 +1549,9 @@ namespace WindowsFormsApp1
             return BuildPhotoshopResourceBlock(0x03EE, data);
         }
 
+        /// <summary>
+        /// 为指定资源编号封装 8BIM 头、空名称、数据长度及偶数字节对齐。
+        /// </summary>
         private static byte[] BuildPhotoshopResourceBlock(int resourceId, List<byte> data)
         {
             var block = new List<byte>();
@@ -1459,6 +1574,9 @@ namespace WindowsFormsApp1
             return block.ToArray();
         }
 
+        /// <summary>
+        /// 从系统图像编码器中查找与目标格式匹配的编码器。
+        /// </summary>
         private static ImageCodecInfo GetEncoder(ImageFormat format)
         {
             var codecs = ImageCodecInfo.GetImageEncoders();
@@ -1470,6 +1588,9 @@ namespace WindowsFormsApp1
             return null;
         }
 
+        /// <summary>
+        /// 生成用于界面预览的位图副本，避免源文件句柄长期被占用。
+        /// </summary>
         public static Bitmap GeneratePreview(string imagePath)
         {
             try
@@ -1501,6 +1622,9 @@ namespace WindowsFormsApp1
                 return null;
             }
         }
+        /// <summary>
+        /// 将输出位图统一设置为 300 DPI，保证毫米尺寸与打印流程一致。
+        /// </summary>
         private static void ApplyOutputResolution(Bitmap bitmap)
         {
             if (bitmap == null)

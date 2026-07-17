@@ -11,6 +11,9 @@ namespace WindowsFormsApp1
         /// <summary>
         /// 打开套图对话框，并将成功结果回载到画布。
         /// </summary>
+        /// <summary>
+        /// 打开套图窗口，并在任务完成后将结果图片载入主画布。
+        /// </summary>
         private void HandleMergeToolClick()
         {
             using (MergeDialog dialog = new MergeDialog())
@@ -26,6 +29,9 @@ namespace WindowsFormsApp1
         /// <summary>
         /// 打开排版输出对话框，并将导出图片载入画布。
         /// </summary>
+        /// <summary>
+        /// 打开排版输出窗口，并将正式排版 TIFF 回传到主画布。
+        /// </summary>
         private void HandleLayoutOutputToolClick()
         {
             using (LayoutOutputDialog dialog = new LayoutOutputDialog())
@@ -40,6 +46,9 @@ namespace WindowsFormsApp1
 
         /// <summary>
         /// 将对话框返回的结果集统一载入画布。
+        /// </summary>
+        /// <summary>
+        /// 根据套图窗口返回的单张或批量结果，选择对应的画布加载方式。
         /// </summary>
         private void LoadDialogResultsToCanvasCore(MergeDialog dialog)
         {
@@ -63,6 +72,9 @@ namespace WindowsFormsApp1
         /// <summary>
         /// 将单张结果图片载入画布。
         /// </summary>
+        /// <summary>
+        /// 将单张文件路径转换为统一的批量加载调用。
+        /// </summary>
         private void LoadResultToCanvasCore(string path)
         {
             LoadResultsToCanvasCore(new[] { path });
@@ -70,6 +82,9 @@ namespace WindowsFormsApp1
 
         /// <summary>
         /// 将一个或多个有效图片文件载入画布，并同步更新状态栏。
+        /// </summary>
+        /// <summary>
+        /// 过滤不存在的路径后载入画布；多张图片会按水平方向自动平铺。
         /// </summary>
         private void LoadResultsToCanvasCore(IEnumerable<string> paths)
         {
@@ -109,6 +124,9 @@ namespace WindowsFormsApp1
         /// <summary>
         /// 将工具栏缩放值应用到画布视口。
         /// </summary>
+        /// <summary>
+        /// 将缩放滑块的百分比同步到画布缩放系数和界面文字。
+        /// </summary>
         private void ApplyZoomTrackBarValue()
         {
             if (canvas == null)
@@ -123,6 +141,9 @@ namespace WindowsFormsApp1
 
         /// <summary>
         /// 更新当前画布工具，并刷新对应按钮的选中状态。
+        /// </summary>
+        /// <summary>
+        /// 切换当前画布工具，并同步更新工具栏按钮的选中视觉状态。
         /// </summary>
         private void ApplyCanvasToolState(CanvasTool tool)
         {

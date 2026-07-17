@@ -63,6 +63,10 @@ namespace WindowsFormsApp1
         private const int MaxBitmapDimensionPx = 65000;
         private const long MaxCanvasBytes = 1024L * 1024L * 1024L;
 
+        /// <summary>
+        /// 将毫米版式参数换算为像素坐标，并生成全部格位的固定位置。
+        /// 在此阶段统一验证画布、间距和格位是否超出大图边界。
+        /// </summary>
         public static PreparedLayout PrepareLayout(SheetLayoutSettings settings)
         {
             if (settings == null)
@@ -124,6 +128,9 @@ namespace WindowsFormsApp1
             return result;
         }
 
+        /// <summary>
+        /// 在创建位图前估算 32 位画布内存，提前阻止无法稳定输出的超大尺寸。
+        /// </summary>
         private static void ValidateCanvasCapacity(int canvasWidth, int canvasHeight)
         {
             long pixelCount = (long)canvasWidth * canvasHeight;
@@ -145,6 +152,9 @@ namespace WindowsFormsApp1
             }
         }
 
+        /// <summary>
+        /// 获取排版源目录中的受支持图像文件，并按文件名稳定排序。
+        /// </summary>
         public static List<string> GetImageFiles(string folderPath)
         {
             string[] imageExtensions = { ".psd", ".psb", ".tif", ".tiff", ".jpg", ".jpeg", ".png", ".bmp" };
@@ -157,6 +167,9 @@ namespace WindowsFormsApp1
                 .ToList();
         }
 
+        /// <summary>
+        /// 生成不覆盖已有文件的输出路径，冲突时自动追加递增序号。
+        /// </summary>
         public static string NextOutputFile(string saveFolder, string baseName, string ext)
         {
             string file = Path.Combine(saveFolder, baseName + ext);
@@ -169,6 +182,9 @@ namespace WindowsFormsApp1
             return file;
         }
 
+        /// <summary>
+        /// 将界面格式名称规范化为对应的文件扩展名。
+        /// </summary>
         public static string GetOutputExtension(string format)
         {
             switch ((format ?? string.Empty).Trim().ToUpperInvariant())
@@ -185,6 +201,9 @@ namespace WindowsFormsApp1
             }
         }
 
+        /// <summary>
+        /// 在创建大图前逐个验证源文件可读性，避免耗时排版后才因单张坏图失败。
+        /// </summary>
         public static void ValidateSourceImages(IEnumerable<string> imagePaths)
         {
             foreach (string imagePath in imagePaths ?? Enumerable.Empty<string>())
@@ -197,6 +216,10 @@ namespace WindowsFormsApp1
             }
         }
 
+        /// <summary>
+        /// 执行完整排版：准备格位、加载素材、等比居中绘制并导出 CMYK TIFF。
+        /// 勾选定位图时会先导出格子定位图，再输出不含边框的正式排版图。
+        /// </summary>
         public static LayoutOutputResult Execute(LayoutOutputRequest request, Action<string> progressCallback = null)
         {
             if (request == null)
@@ -284,6 +307,9 @@ namespace WindowsFormsApp1
         /// <summary>
         /// 输出仅包含格位边框的定位图，用于先打印定位线后放置产品。
         /// </summary>
+        /// <summary>
+        /// 输出仅包含格位边框的定位图，用于先打印定位线后放置产品。
+        /// </summary>
         private static void ExportSlotGuide(PreparedLayout prepared, string outputPath)
         {
             using (var canvas = new Bitmap(prepared.CanvasWidthPx, prepared.CanvasHeightPx, System.Drawing.Imaging.PixelFormat.Format32bppArgb))
@@ -303,6 +329,9 @@ namespace WindowsFormsApp1
             }
         }
 
+        /// <summary>
+        /// 按实际毫米线宽在每个格位边界绘制洋红色测量线。
+        /// </summary>
         private static void DrawSlotBounds(Graphics graphics, IEnumerable<Rectangle> slots, int dpi)
         {
             float lineWidth = Math.Max(1f, dpi * 0.3f / 25.4f);
@@ -317,6 +346,9 @@ namespace WindowsFormsApp1
             }
         }
 
+        /// <summary>
+        /// 计算素材在格位内等比完整显示的目标矩形，剩余空间自动居中留白。
+        /// </summary>
         private static Rectangle CalculateContainRect(Size imageSize, Rectangle slot)
         {
             if (imageSize.Width <= 0 || imageSize.Height <= 0)
@@ -330,12 +362,18 @@ namespace WindowsFormsApp1
             return new Rectangle(left, top, targetWidth, targetHeight);
         }
         // 映射毫米到像素计算
+        /// <summary>
+        /// 按 DPI 将毫米换算为像素，并使用远离零舍入保证排版坐标稳定。
+        /// </summary>
         private static int MmToPixels(decimal millimeters, decimal dpi)
         {
             decimal inches = millimeters / 25.4m;
             return Math.Max(1, (int)Math.Round(inches * dpi, MidpointRounding.AwayFromZero));
         }
 
+        /// <summary>
+        /// 清理用户输入的非法文件名字符，并为未输入名称提供默认值。
+        /// </summary>
         private static string SanitizeOutputFileName(string outputFileName)
         {
             string baseName = string.IsNullOrWhiteSpace(outputFileName) ? "layout-output" : outputFileName.Trim();
