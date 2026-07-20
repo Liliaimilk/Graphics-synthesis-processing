@@ -194,6 +194,91 @@ namespace WindowsFormsApp1
             }
         }
 
+        /// <summary>
+        /// 从两个 Photoshop 分层 TIFF 中分别提取指定图层，再复用既有套图与专色输出流程。
+        /// 临时 PNG 仅用于把图层透明像素交给现有稳定的图像读取链路，任务结束后会立即删除。
+        /// </summary>
+        public static void ProcessTiffLayerPair(
+            string templateTifPath,
+            string templateLayerName,
+            string materialTifPath,
+            string materialLayerName,
+            string outputPath,
+            string format,
+            Action<string> progressCallback,
+            List<string> channelNames,
+            string rotation,
+            string mirror,
+            TemplateCompositeMode compositeMode = TemplateCompositeMode.Standard,
+            string exclusionMaskPath = null,
+            Action controlCheckpoint = null)
+        {
+            string temporaryFolder = Path.Combine(Path.GetTempPath(), "WindowsFormsApp1", "LayerMerge");
+            string token = Guid.NewGuid().ToString("N");
+            string templateTemporaryPath = Path.Combine(temporaryFolder, token + "_template.png");
+            string materialTemporaryPath = Path.Combine(temporaryFolder, token + "_material.png");
+
+            try
+            {
+                Directory.CreateDirectory(temporaryFolder);
+                controlCheckpoint?.Invoke();
+                progressCallback?.Invoke(string.IsNullOrWhiteSpace(templateLayerName)
+                    ? "正在提取模板可见图层..."
+                    : $"正在提取模板图层: {templateLayerName}");
+                using (Bitmap templateLayer = string.IsNullOrWhiteSpace(templateLayerName)
+                    ? PhotoshopTiffLayerParser.RenderVisibleLayers(templateTifPath)
+                    : PhotoshopTiffLayerParser.RenderLayer(templateTifPath, templateLayerName))
+                {
+                    templateLayer.Save(templateTemporaryPath, ImageFormat.Png);
+                }
+
+                controlCheckpoint?.Invoke();
+                progressCallback?.Invoke($"正在提取素材图层: {materialLayerName}");
+                using (Bitmap materialLayer = PhotoshopTiffLayerParser.RenderLayer(materialTifPath, materialLayerName))
+                {
+                    materialLayer.Save(materialTemporaryPath, ImageFormat.Png);
+                }
+
+                ProcessTifMode(
+                    templateTemporaryPath,
+                    materialTemporaryPath,
+                    outputPath,
+                    format,
+                    progressCallback,
+                    channelNames,
+                    rotation,
+                    mirror,
+                    0,
+                    0,
+                    compositeMode,
+                    exclusionMaskPath,
+                    controlCheckpoint);
+            }
+            finally
+            {
+                // ProcessTifMode 会缓存模板像素；临时模板不能长期留在缓存中，避免批量双面任务累积内存。
+                ImagePixelCache.TryRemove(Path.GetFullPath(templateTemporaryPath), out CachedImagePixelData ignoredCacheItem);
+                TryDeleteTemporaryFile(templateTemporaryPath);
+                TryDeleteTemporaryFile(materialTemporaryPath);
+            }
+        }
+
+        /// <summary>
+        /// 删除任务使用的临时图层文件；删除失败不影响已完成的输出。
+        /// </summary>
+        private static void TryDeleteTemporaryFile(string filePath)
+        {
+            try
+            {
+                if (File.Exists(filePath))
+                    File.Delete(filePath);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"清理临时图层文件失败: {ex.Message}");
+            }
+        }
+
         // 镜像
         /// <summary>
         /// 根据指定方向创建图像镜像副本；未指定有效方向时直接返回原对象。

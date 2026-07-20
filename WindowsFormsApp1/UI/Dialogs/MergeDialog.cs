@@ -39,7 +39,9 @@ namespace WindowsFormsApp1
         private Button addChannels;
 
         private CheckBox chkBatchMode;
+        private CheckBox chkDoubleSided;
         private Button btnMerge;
+        private Button btnParseTiffLayers;
         private Label lblStatus;
         private Button btnClose;
         private Button btnBrowseTemplate;
@@ -85,6 +87,9 @@ namespace WindowsFormsApp1
             public string TemplatePath { get; set; }
             public string MaterialPath { get; set; }
             public string OutputPath { get; set; }
+            public string FaceName { get; set; }
+            public string TemplateLayerName { get; set; }
+            public string MaterialLayerName { get; set; }
             public MergeJobStatus Status { get; set; }
             public string Message { get; set; }
             public ListViewItem ListItem { get; set; }
@@ -116,6 +121,7 @@ namespace WindowsFormsApp1
         private sealed class BuildJobsResult
         {
             public bool IsBatchMode { get; set; }
+            public bool IsDoubleSided { get; set; }
             public string TemplateFile { get; set; }
             public List<MergeJobItem> Jobs { get; set; }
             public string Format { get; set; }
@@ -693,7 +699,7 @@ namespace WindowsFormsApp1
             chkBatchMode = new CheckBox
             {
                 Text = "批量套图",
-                Location = new Point(startX + labelWidth + 200, startY + 8),
+                Location = new Point(startX + labelWidth + 210, startY + 8),
                 Size = new Size(90, 22),
                 ForeColor = Color.FromArgb(200, 205, 215),
                 BackColor = Color.Transparent,
@@ -702,11 +708,22 @@ namespace WindowsFormsApp1
             };
             chkBatchMode.CheckedChanged += (s, e) => ToggleBatchModeLayout();
 
+            chkDoubleSided = new CheckBox
+            {
+                Text = "启用双面套图",
+                Location = new Point(startX + labelWidth + 95, startY + 8),
+                Size = new Size(110, 22),
+                ForeColor = Color.FromArgb(200, 205, 215),
+                BackColor = Color.Transparent,
+                FlatStyle = FlatStyle.Flat,
+                Checked = false
+            };
+
             lblStatus = new Label
             {
                 Text = "就绪",
-                Location = new Point(startX + 380, startY + 8),
-                Size = new Size(300, 22),
+                Location = new Point(startX + 390, startY + 8),
+                Size = new Size(290, 22),
                 Font = new Font("微软雅黑", 9F),
                 ForeColor = Color.FromArgb(150, 155, 165),
                 BackColor = Color.Transparent
@@ -727,6 +744,21 @@ namespace WindowsFormsApp1
             btnMerge.FlatAppearance.BorderColor = Color.FromArgb(70, 140, 200);
             btnMerge.FlatAppearance.MouseOverBackColor = Color.FromArgb(55, 120, 180);
             btnMerge.Click += BtnMerge_Click;
+
+            btnParseTiffLayers = new Button
+            {
+                Text = "解析TIFF图层",
+                Location = new Point(startX + 230, startY),
+                Size = new Size(120, 36),
+                Font = new Font("微软雅黑", 9F),
+                BackColor = Color.FromArgb(55, 85, 120),
+                ForeColor = Color.FromArgb(220, 225, 235),
+                FlatStyle = FlatStyle.Flat,
+                Cursor = Cursors.Hand
+            };
+            btnParseTiffLayers.FlatAppearance.BorderColor = Color.FromArgb(70, 140, 200);
+            btnParseTiffLayers.FlatAppearance.MouseOverBackColor = Color.FromArgb(70, 110, 155);
+            btnParseTiffLayers.Click += BtnParseTiffLayers_Click;
 
             btnClose = new Button
             {
@@ -786,11 +818,12 @@ namespace WindowsFormsApp1
                 BorderStyle = BorderStyle.FixedSingle,
                 Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right
             };
-            lvResults.Columns.Add("序号", 50);
-            lvResults.Columns.Add("素材", 180);
-            lvResults.Columns.Add("状态", 90);
-            lvResults.Columns.Add("输出文件", 220);
-            lvResults.Columns.Add("消息", 140);
+            lvResults.Columns.Add("序号", 45);
+            lvResults.Columns.Add("素材", 120);
+            lvResults.Columns.Add("面别 / 图层", 105);
+            lvResults.Columns.Add("状态", 70);
+            lvResults.Columns.Add("输出文件", 175);
+            lvResults.Columns.Add("消息", 150);
 
             btnPauseResume = new Button
             {
@@ -836,14 +869,119 @@ namespace WindowsFormsApp1
                 lblRotation, cmbRotation,
                 lblMirror, cmbMirror,
                 channelSectionLabel, addChannels, channelListPanel,
-                chkBatchMode, lblStatus,
-                btnMerge, btnClose,
+                chkDoubleSided, chkBatchMode, lblStatus,
+                btnMerge, btnParseTiffLayers, btnClose,
                 pnlBatch
             });
             // chkWhiteInk, chkVarnish,
 
             RearrangeChannels();
             ToggleBatchModeLayout();
+        }
+
+        /// <summary>
+        /// 选择 Photoshop 图层 TIFF，并显示标签 37724 中解析出的图层元数据。
+        /// </summary>
+        private void BtnParseTiffLayers_Click(object sender, EventArgs e)
+        {
+            using (var dialog = new OpenFileDialog())
+            {
+                dialog.Title = "选择带图层的 Photoshop TIFF";
+                dialog.Filter = "TIFF 文件|*.tif;*.tiff|所有文件|*.*";
+                if (dialog.ShowDialog(this) != DialogResult.OK)
+                    return;
+
+                PhotoshopTiffLayerParseResult result = PhotoshopTiffLayerParser.Parse(dialog.FileName);
+                if (!result.HasPhotoshopLayerData)
+                {
+                    MessageBox.Show(result.ErrorMessage ?? "未找到 Photoshop 图层数据。", "TIFF 图层解析", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    return;
+                }
+
+                if (!string.IsNullOrWhiteSpace(result.ErrorMessage))
+                {
+                    MessageBox.Show(result.ErrorMessage, "TIFF 图层解析", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
+                }
+
+                string layerDetails = string.Join(Environment.NewLine, result.Layers.Select((layer, index) =>
+                    $"{index + 1}. {layer.Name} | {layer.Bounds.Left},{layer.Bounds.Top} | {layer.Bounds.Width}×{layer.Bounds.Height} | 通道:{layer.ChannelCount} | {(layer.IsVisible ? "可见" : "隐藏")}"));
+                MessageBox.Show($"解析成功，共 {result.Layers.Count} 个图层：{Environment.NewLine}{Environment.NewLine}{layerDetails}", "TIFF 图层解析", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
+        }
+
+        /// <summary>
+        /// 按“基础模板 + 基础模板@双面”构建双面套图任务，每个素材固定生成正面和反面两项作业。
+        /// </summary>
+        private BuildJobsResult BuildDoubleSidedJobs(List<string> templateFiles, List<string> materialFiles, bool isBatchMode, string format, string rotation, string mirror)
+        {
+            List<string> frontTemplates = templateFiles
+                .Where(path => !GetBaseName(path).EndsWith("@双面", StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            List<string> backTemplates = templateFiles
+                .Where(path => GetBaseName(path).EndsWith("@双面", StringComparison.OrdinalIgnoreCase))
+                .ToList();
+
+            if (templateFiles.Count != 2 || frontTemplates.Count != 1 || backTemplates.Count != 1)
+            {
+                ShowStatusMessage("双面模板无效", "启用双面套图时，模板目录必须只包含一张基础模板和一张同名的 @双面 模板。", "提示", MessageBoxIcon.Warning);
+                return null;
+            }
+
+            string frontTemplate = frontTemplates[0];
+            string backTemplate = backTemplates[0];
+            string expectedBackName = GetBaseName(frontTemplate) + "@双面";
+            if (!string.Equals(GetBaseName(backTemplate), expectedBackName, StringComparison.OrdinalIgnoreCase))
+            {
+                ShowStatusMessage("双面模板不匹配", $"反面模板必须命名为“{expectedBackName}”。", "提示", MessageBoxIcon.Warning);
+                return null;
+            }
+
+            if (!isBatchMode)
+                materialFiles = new List<string> { materialFiles[0] };
+
+            string separator = GetOutputSeparator();
+            string extension = GetOutputExtension(format);
+            var jobs = new List<MergeJobItem>();
+            int index = 1;
+            foreach (string materialFile in materialFiles)
+            {
+                jobs.Add(new MergeJobItem
+                {
+                    Index = index++,
+                    TemplatePath = frontTemplate,
+                    MaterialPath = materialFile,
+                    MaterialLayerName = "二页",
+                    FaceName = "正面（二页）",
+                    OutputPath = NextOutputFile(txtSavePath.Text, GetBaseName(frontTemplate) + separator + GetBaseName(materialFile), extension),
+                    Status = MergeJobStatus.Pending,
+                    Message = "等待处理"
+                });
+                jobs.Add(new MergeJobItem
+                {
+                    Index = index++,
+                    TemplatePath = backTemplate,
+                    MaterialPath = materialFile,
+                    MaterialLayerName = "二页反面",
+                    FaceName = "反面（二页反面）",
+                    OutputPath = NextOutputFile(txtSavePath.Text, GetBaseName(backTemplate) + separator + GetBaseName(materialFile), extension),
+                    Status = MergeJobStatus.Pending,
+                    Message = "等待处理"
+                });
+            }
+
+            return new BuildJobsResult
+            {
+                IsBatchMode = isBatchMode,
+                IsDoubleSided = true,
+                TemplateFile = frontTemplate,
+                Jobs = jobs,
+                Format = format,
+                CompositeMode = TemplateCompositeMode.FullBleed,
+                CompositeModeName = "双面满版模式",
+                Rotation = rotation,
+                Mirror = mirror
+            };
         }
 
         // 动态添加通道的点击事件
@@ -1045,13 +1183,14 @@ namespace WindowsFormsApp1
 
         private void UpdateDialogLayout()
         {
-            if (channelSectionLabel == null || channelListPanel == null || chkBatchMode == null || lblStatus == null || btnMerge == null || btnClose == null || pnlBatch == null)
+            if (channelSectionLabel == null || channelListPanel == null || chkBatchMode == null || chkDoubleSided == null || lblStatus == null || btnMerge == null || btnClose == null || pnlBatch == null)
             {
                 return;
             }
 
             int optionsTop = channelListPanel.Bottom + 8;
-            chkBatchMode.Location = new Point(305, optionsTop + 8);
+            chkDoubleSided.Location = new Point(195, optionsTop + 8);
+            chkBatchMode.Location = new Point(310, optionsTop + 8);
             lblStatus.Location = new Point(400, optionsTop + 8);
 
             int buttonTop = optionsTop + 50;
@@ -1340,6 +1479,11 @@ namespace WindowsFormsApp1
                 ShowStatusMessage("未找到素材图片", "素材文件夹未找到图片文件", "错误", MessageBoxIcon.Error);
                 return null;
             }
+            if (chkDoubleSided.Checked)
+            {
+                return BuildDoubleSidedJobs(templateFiles, materialFiles, isBatchMode, format, rotation, mirror);
+            }
+
             if (isBatchMode && templateFiles.Count != 1)
             {
                 ShowStatusMessage("批量模式模版数量无效", "批量套图当前只支持单模版目录，请保证模版文件夹中只有一张图片。", "提示", MessageBoxIcon.Warning);
@@ -1374,6 +1518,7 @@ namespace WindowsFormsApp1
                 {
                     var item = new ListViewItem(job.Index.ToString());
                     item.SubItems.Add(Path.GetFileName(job.MaterialPath));
+                    item.SubItems.Add(job.FaceName ?? "单面");
                     item.SubItems.Add(GetStatusText(job.Status));
                     item.SubItems.Add(Path.GetFileName(job.OutputPath));
                     item.SubItems.Add(job.Message ?? string.Empty);
@@ -1399,8 +1544,8 @@ namespace WindowsFormsApp1
 
             if (job.ListItem != null)
             {
-                job.ListItem.SubItems[2].Text = GetStatusText(status);
-                job.ListItem.SubItems[4].Text = message ?? string.Empty;
+                job.ListItem.SubItems[3].Text = GetStatusText(status);
+                job.ListItem.SubItems[5].Text = message ?? string.Empty;
             }
         }
 
@@ -1460,6 +1605,7 @@ namespace WindowsFormsApp1
             // chkWhiteInk.Enabled = !busy;
             // chkVarnish.Enabled = !busy;
             chkBatchMode.Enabled = !busy;
+            chkDoubleSided.Enabled = !busy;
             btnBrowseTemplate.Enabled = !busy;
             btnBrowseMaterial.Enabled = !busy;
             btnBrowseSave.Enabled = !busy;
@@ -1563,6 +1709,11 @@ namespace WindowsFormsApp1
 
         private async Task<List<MergeJobItem>> PrevalidateJobsAsync(BuildJobsResult buildResult)
         {
+            if (buildResult.IsDoubleSided)
+            {
+                return await PrevalidateDoubleSidedJobsAsync(buildResult);
+            }
+
             var validJobs = new List<MergeJobItem>();
             var invalidMessages = new List<string>();
 
@@ -1596,10 +1747,42 @@ namespace WindowsFormsApp1
                     continue;
                 }
 
+                if (buildResult.IsDoubleSided)
+                {
+                    string templateLayerError = await Task.Run(() => PhotoshopTiffLayerParser.ValidateLayer(job.TemplatePath, job.TemplateLayerName));
+                    if (!string.IsNullOrWhiteSpace(templateLayerError))
+                    {
+                        string message = $"模板图层“{job.TemplateLayerName}”预检失败: {templateLayerError}";
+                        invalidMessages.Add($"{Path.GetFileName(job.TemplatePath)}: {message}");
+                        if (buildResult.IsBatchMode)
+                        {
+                            UpdateJobStatus(job, MergeJobStatus.Skipped, message);
+                            UpdateBatchSummary();
+                        }
+                        continue;
+                    }
+                }
+
                 lblStatus.Text = $"正在预检素材: {Path.GetFileName(job.MaterialPath)}";
                 ValidationResult validation = await Task.Run(() => ValidateImage(job.MaterialPath));
                 if (validation.IsValid)
                 {
+                    if (buildResult.IsDoubleSided)
+                    {
+                        string materialLayerError = await Task.Run(() => PhotoshopTiffLayerParser.ValidateLayer(job.MaterialPath, job.MaterialLayerName));
+                        if (!string.IsNullOrWhiteSpace(materialLayerError))
+                        {
+                            string message = $"素材图层“{job.MaterialLayerName}”预检失败: {materialLayerError}";
+                            invalidMessages.Add($"{Path.GetFileName(job.MaterialPath)}: {message}");
+                            if (buildResult.IsBatchMode)
+                            {
+                                UpdateJobStatus(job, MergeJobStatus.Skipped, message);
+                                UpdateBatchSummary();
+                            }
+                            continue;
+                        }
+                    }
+
                     validJobs.Add(job);
                     if (buildResult.IsBatchMode)
                     {
@@ -1624,6 +1807,125 @@ namespace WindowsFormsApp1
                 ShowStatusMessage(
                     $"预检完成，跳过 {invalidMessages.Count} 个素材",
                     "以下素材预检失败，将自动跳过：\n" + string.Join("\n", invalidMessages),
+                    "预检提示",
+                    MessageBoxIcon.Warning);
+            }
+
+            return validJobs;
+        }
+
+        /// <summary>
+        /// 双面任务以单个素材为原子单位预检，任一面失败时正反两面均不进入执行队列。
+        /// </summary>
+        private async Task<List<MergeJobItem>> PrevalidateDoubleSidedJobsAsync(BuildJobsResult buildResult)
+        {
+            var validJobs = new List<MergeJobItem>();
+            var invalidMessages = new List<string>();
+            var imageValidationCache = new Dictionary<string, ValidationResult>(StringComparer.OrdinalIgnoreCase);
+            var layerValidationCache = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (IGrouping<string, MergeJobItem> group in buildResult.Jobs.GroupBy(job => Path.GetFullPath(job.MaterialPath), StringComparer.OrdinalIgnoreCase))
+            {
+                List<MergeJobItem> materialJobs = group.ToList();
+                foreach (MergeJobItem job in materialJobs)
+                {
+                    if (buildResult.IsBatchMode)
+                        UpdateJobStatus(job, MergeJobStatus.Validating, "双面预检中...");
+                }
+                if (buildResult.IsBatchMode)
+                    UpdateBatchSummary();
+
+                string errorMessage = null;
+                foreach (MergeJobItem job in materialJobs)
+                {
+                    ValidationResult templateValidation;
+                    if (!imageValidationCache.TryGetValue(job.TemplatePath, out templateValidation))
+                    {
+                        lblStatus.Text = $"正在预检模版: {Path.GetFileName(job.TemplatePath)}";
+                        templateValidation = await Task.Run(() => ValidateImage(job.TemplatePath));
+                        imageValidationCache[job.TemplatePath] = templateValidation;
+                    }
+
+                    if (!templateValidation.IsValid)
+                    {
+                        errorMessage = $"模版预检失败: {templateValidation.ErrorMessage}";
+                        break;
+                    }
+
+                    string templateLayerKey = job.TemplatePath + "|visible";
+                    string templateLayerError;
+                    if (!layerValidationCache.TryGetValue(templateLayerKey, out templateLayerError))
+                    {
+                        templateLayerError = await Task.Run(() => PhotoshopTiffLayerParser.ValidateVisibleLayers(job.TemplatePath));
+                        layerValidationCache[templateLayerKey] = templateLayerError;
+                    }
+                    if (!string.IsNullOrWhiteSpace(templateLayerError))
+                    {
+                        errorMessage = $"模版可见图层预检失败: {templateLayerError}";
+                        break;
+                    }
+                }
+
+                MergeJobItem firstJob = materialJobs[0];
+                if (errorMessage == null)
+                {
+                    ValidationResult materialValidation;
+                    if (!imageValidationCache.TryGetValue(firstJob.MaterialPath, out materialValidation))
+                    {
+                        lblStatus.Text = $"正在预检素材: {Path.GetFileName(firstJob.MaterialPath)}";
+                        materialValidation = await Task.Run(() => ValidateImage(firstJob.MaterialPath));
+                        imageValidationCache[firstJob.MaterialPath] = materialValidation;
+                    }
+
+                    if (!materialValidation.IsValid)
+                    {
+                        errorMessage = $"素材预检失败: {materialValidation.ErrorMessage}";
+                    }
+                    else
+                    {
+                        foreach (MergeJobItem job in materialJobs)
+                        {
+                            string materialLayerKey = job.MaterialPath + "|" + job.MaterialLayerName;
+                            string materialLayerError;
+                            if (!layerValidationCache.TryGetValue(materialLayerKey, out materialLayerError))
+                            {
+                                materialLayerError = await Task.Run(() => PhotoshopTiffLayerParser.ValidateLayer(job.MaterialPath, job.MaterialLayerName));
+                                layerValidationCache[materialLayerKey] = materialLayerError;
+                            }
+                            if (!string.IsNullOrWhiteSpace(materialLayerError))
+                            {
+                                errorMessage = $"素材图层“{job.MaterialLayerName}”预检失败: {materialLayerError}";
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                if (errorMessage == null)
+                {
+                    validJobs.AddRange(materialJobs);
+                    foreach (MergeJobItem job in materialJobs)
+                    {
+                        if (buildResult.IsBatchMode)
+                            UpdateJobStatus(job, MergeJobStatus.Pending, "等待处理");
+                    }
+                }
+                else
+                {
+                    invalidMessages.Add($"{Path.GetFileName(firstJob.MaterialPath)}: {errorMessage}");
+                    foreach (MergeJobItem job in materialJobs)
+                        UpdateJobStatus(job, MergeJobStatus.Skipped, "同一素材的正反面已整体跳过: " + errorMessage);
+                }
+
+                if (buildResult.IsBatchMode)
+                    UpdateBatchSummary();
+            }
+
+            if (invalidMessages.Count > 0)
+            {
+                ShowStatusMessage(
+                    $"双面预检完成，跳过 {invalidMessages.Count} 个素材",
+                    "以下素材的正反面任务未通过预检，将整体跳过：\n" + string.Join("\n", invalidMessages),
                     "预检提示",
                     MessageBoxIcon.Warning);
             }
@@ -1694,20 +1996,40 @@ namespace WindowsFormsApp1
 
                         await Task.Run(() =>
                         {
-                            AsposePSDHelper.ProcessTifMode(
-                                job.TemplatePath,
-                                job.MaterialPath,
-                                job.OutputPath,
-                                buildResult.Format,
-                                msg => ReportProgress(job, msg),
-                                channelNames,
-                                buildResult.Rotation,
-                                buildResult.Mirror,
-                                0,
-                                0,
-                                buildResult.CompositeMode,
-                                buildResult.ExclusionMaskPath,
-                                RunControlCheckpoint);
+                            if (buildResult.IsDoubleSided)
+                            {
+                                AsposePSDHelper.ProcessTiffLayerPair(
+                                    job.TemplatePath,
+                                    job.TemplateLayerName,
+                                    job.MaterialPath,
+                                    job.MaterialLayerName,
+                                    job.OutputPath,
+                                    buildResult.Format,
+                                    msg => ReportProgress(job, msg),
+                                    channelNames,
+                                    buildResult.Rotation,
+                                    buildResult.Mirror,
+                                    buildResult.CompositeMode,
+                                    buildResult.ExclusionMaskPath,
+                                    RunControlCheckpoint);
+                            }
+                            else
+                            {
+                                AsposePSDHelper.ProcessTifMode(
+                                    job.TemplatePath,
+                                    job.MaterialPath,
+                                    job.OutputPath,
+                                    buildResult.Format,
+                                    msg => ReportProgress(job, msg),
+                                    channelNames,
+                                    buildResult.Rotation,
+                                    buildResult.Mirror,
+                                    0,
+                                    0,
+                                    buildResult.CompositeMode,
+                                    buildResult.ExclusionMaskPath,
+                                    RunControlCheckpoint);
+                            }
                         }, batchState.CancellationSource.Token);
 
                         batchState.SuccessOutputPaths.Add(job.OutputPath);
