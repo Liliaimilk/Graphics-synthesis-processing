@@ -660,6 +660,10 @@ namespace WindowsFormsApp1
                     return;
                 }
 
+                // 排版按格子顺序填充；素材少于格子时保留空位，素材超出容量时仅显示前面的可排入素材。
+                if (currentImageFiles != null && currentImageFiles.Count > prepared.Capacity)
+                    currentImageFiles = currentImageFiles.Take(prepared.Capacity).ToList();
+
                 // 更新预览信息和状态
                 if (mode == "all")
                 {

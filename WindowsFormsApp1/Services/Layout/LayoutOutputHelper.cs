@@ -243,8 +243,11 @@ namespace WindowsFormsApp1
 
             // 超大画布改由条带式 TIFF 写出，不再因完整 Bitmap 的内存保护而中断。
             PreparedLayout prepared = PrepareLayout(request.Settings, validateCanvasCapacity: false);
-            if (imageFiles.Count > prepared.Capacity) 
-                throw new InvalidOperationException($"当前版式容量不足，最多可放 {prepared.Capacity} 张，实际找到 {imageFiles.Count} 张");
+            if (imageFiles.Count > prepared.Capacity)
+            {
+                progressCallback?.Invoke($"素材共 {imageFiles.Count} 张，当前版式仅排入前 {prepared.Capacity} 张，其余素材不参与本次输出。");
+                imageFiles = imageFiles.Take(prepared.Capacity).ToList();
+            }
 
             progressCallback?.Invoke("正在预检图片...");
             ValidateSourceImages(imageFiles);

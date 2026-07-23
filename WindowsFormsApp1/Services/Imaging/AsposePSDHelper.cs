@@ -577,6 +577,10 @@ namespace WindowsFormsApp1
         /// </summary>
         private static ImagePixelData LoadTiffRasterPixelDataForLayout(string tifPath)
         {
+            var cmykPixelData = TryLoadCmykTiffPixelDataForLayout(tifPath);
+            if (cmykPixelData != null)
+                return cmykPixelData;
+
             var pixelData = TryLoadTiffRasterPixelData(tifPath);
             var opaqueBounds = GetOpaqueBounds(pixelData.Pixels, pixelData.Width, pixelData.Height);
             if (opaqueBounds != Rectangle.Empty &&
@@ -589,6 +593,81 @@ namespace WindowsFormsApp1
             }
 
             return pixelData;
+        }
+
+        /// <summary>
+        /// 直接读取 CMYK TIFF 的扫描线。排版时必须忽略 Alpha 后的专色通道，
+        /// 避免通用解码器将 C、M、Y 或额外通道误解释为 RGB 而出现偏绿等颜色错误。
+        /// </summary>
+        private static ImagePixelData TryLoadCmykTiffPixelDataForLayout(string tifPath)
+        {
+            try
+            {
+                using (var tif = Tiff.Open(tifPath, "r"))
+                {
+                    if (tif == null)
+                        return null;
+
+                    var widthField = tif.GetField(TiffTag.IMAGEWIDTH);
+                    var heightField = tif.GetField(TiffTag.IMAGELENGTH);
+                    var samplesField = tif.GetField(TiffTag.SAMPLESPERPIXEL);
+                    var bitsField = tif.GetField(TiffTag.BITSPERSAMPLE);
+                    var photometricField = tif.GetField(TiffTag.PHOTOMETRIC);
+                    var planarField = tif.GetField(TiffTag.PLANARCONFIG);
+                    if (widthField == null || heightField == null || samplesField == null || bitsField == null ||
+                        photometricField == null || planarField == null)
+                        return null;
+
+                    int width = widthField[0].ToInt();
+                    int height = heightField[0].ToInt();
+                    int samples = samplesField[0].ToInt();
+                    if (width <= 0 || height <= 0 || samples < 4 || bitsField[0].ToInt() != 8 ||
+                        photometricField[0].ToInt() != (int)Photometric.SEPARATED ||
+                        planarField[0].ToInt() != (int)PlanarConfig.CONTIG)
+                        return null;
+
+                    var pixels = new int[checked(width * height)];
+                    var scanline = new byte[checked(width * samples)];
+                    bool hasAlpha = samples > 4;
+
+                    for (int y = 0; y < height; y++)
+                    {
+                        tif.ReadScanline(scanline, y);
+                        int rowOffset = y * width;
+                        for (int x = 0; x < width; x++)
+                        {
+                            int offset = x * samples;
+                            byte c = scanline[offset];
+                            byte m = scanline[offset + 1];
+                            byte yellow = scanline[offset + 2];
+                            byte k = scanline[offset + 3];
+                            byte alpha = hasAlpha ? scanline[offset + 4] : byte.MaxValue;
+
+                            // TIFF 的 CMYK 分量表示墨量，先按减色法合成，再转换为供 GDI 绘制的 RGB。
+                            byte r = ConvertCmykInkToRgb(c, k);
+                            byte g = ConvertCmykInkToRgb(m, k);
+                            byte b = ConvertCmykInkToRgb(yellow, k);
+                            pixels[rowOffset + x] = (alpha << 24) | (r << 16) | (g << 8) | b;
+                        }
+                    }
+
+                    return new ImagePixelData(width, height, pixels);
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"按 CMYK 扫描线读取排版 TIFF 失败，改用通用读取链路: {ex.Message}");
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// 将单个 CMYK 墨量分量与黑版合成为对应的 RGB 显示分量。
+        /// </summary>
+        private static byte ConvertCmykInkToRgb(byte colorInk, byte blackInk)
+        {
+            int ink = colorInk * (255 - blackInk) / 255 + blackInk;
+            return (byte)(255 - Math.Min(255, ink));
         }
 
         /// <summary>
