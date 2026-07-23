@@ -1661,17 +1661,8 @@ namespace WindowsFormsApp1
 
             try
             {
-                using (var preview = AsposePSDHelper.GeneratePreview(imagePath))
-                {
-                    if (preview == null)
-                    {
-                        return new ValidationResult
-                        {
-                            IsValid = false,
-                            ErrorMessage = "无法读取或格式不兼容"
-                        };
-                    }
-                }
+                // 预检仅验证文件头与尺寸，正式套图时再完整解码像素，避免同一素材被读取两遍。
+                AsposePSDHelper.ValidateImageHeader(imagePath);
 
                 return new ValidationResult
                 {

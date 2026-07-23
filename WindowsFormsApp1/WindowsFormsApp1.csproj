@@ -95,6 +95,7 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
     <Compile Include="Services\Imaging\AsposePSDHelper.cs" />
+    <Compile Include="Services\Imaging\OpenCvMergeRenderer.cs" />
     <Compile Include="Services\Imaging\PhotoshopTiffLayerParser.cs" />
     <Compile Include="Services\Layout\OpenCvLayoutRenderer.cs" />
     <Compile Include="UI\Dialogs\LayoutOutputDialog.cs">

@@ -454,6 +454,42 @@ namespace WindowsFormsApp1
         }
 
         /// <summary>
+        /// 轻量验证图片是否可打开。仅读取文件头、尺寸与 TIFF 基础标签，
+        /// 不解码整张像素数据，供批量套图预检使用。
+        /// </summary>
+        public static void ValidateImageHeader(string imagePath)
+        {
+            if (string.IsNullOrWhiteSpace(imagePath))
+                throw new ArgumentException("图片路径不能为空。", nameof(imagePath));
+            if (!File.Exists(imagePath))
+                throw new FileNotFoundException("图片文件不存在。", imagePath);
+
+            string extension = Path.GetExtension(imagePath).ToLowerInvariant();
+            if (extension == ".tif" || extension == ".tiff")
+            {
+                using (Tiff tif = Tiff.Open(imagePath, "r"))
+                {
+                    if (tif == null)
+                        throw new InvalidOperationException("无法打开 TIFF 文件。");
+
+                    FieldValue[] widthField = tif.GetField(TiffTag.IMAGEWIDTH);
+                    FieldValue[] heightField = tif.GetField(TiffTag.IMAGELENGTH);
+                    if (widthField == null || heightField == null ||
+                        widthField[0].ToInt() <= 0 || heightField[0].ToInt() <= 0)
+                        throw new InvalidOperationException("TIFF 尺寸无效。");
+                }
+
+                return;
+            }
+
+            using (var image = Aspose.PSD.Image.Load(imagePath))
+            {
+                if (image == null || image.Width <= 0 || image.Height <= 0)
+                    throw new InvalidOperationException("图片尺寸无效。");
+            }
+        }
+
+        /// <summary>
         /// 将位图导出为不带额外专色通道的 CMYK TIFF。
         /// </summary>
         public static void SaveBitmapAsFlatTiff(Bitmap bitmap, string outputPath)
@@ -1021,6 +1057,13 @@ namespace WindowsFormsApp1
             int scaledHeight = (int)Math.Ceiling(materialBounds.Height * scale);
             float drawLeft = templateBounds.Left + (templateBounds.Width - scaledWidth) / 2f;
             float drawTop = templateBounds.Top + (templateBounds.Height - scaledHeight) / 2f;
+            int[] scaledPixels = OpenCvMergeRenderer.ResizeArgbRegion(
+                foreground.Pixels,
+                foreground.Width,
+                foreground.Height,
+                materialBounds,
+                scaledWidth,
+                scaledHeight);
 
             for (int destY = templateBounds.Top; destY < templateBounds.Bottom; destY++)
             {
@@ -1046,17 +1089,14 @@ namespace WindowsFormsApp1
                     if (templateAlpha == 0)
                         continue;
 
-                    int sourceX = materialBounds.Left + (int)Math.Floor((destX - drawLeft) / scale);
-                    int sourceY = materialBounds.Top + (int)Math.Floor((destY - drawTop) / scale);
-                    if (sourceX < materialBounds.Left || sourceX >= materialBounds.Right ||
-                        sourceY < materialBounds.Top || sourceY >= materialBounds.Bottom ||
-                        sourceX < 0 || sourceX >= foreground.Width ||
-                        sourceY < 0 || sourceY >= foreground.Height)
+                    int sourceX = (int)Math.Floor(destX - drawLeft);
+                    int sourceY = (int)Math.Floor(destY - drawTop);
+                    if (sourceX < 0 || sourceX >= scaledWidth || sourceY < 0 || sourceY >= scaledHeight)
                     {
                         continue;
                     }
 
-                    int sourcePixel = foreground.Pixels[sourceY * foreground.Width + sourceX];
+                    int sourcePixel = scaledPixels[sourceY * scaledWidth + sourceX];
                     byte sourceAlpha = (byte)((sourcePixel >> 24) & 0xFF);
                     if (sourceAlpha == 0)
                         continue;
