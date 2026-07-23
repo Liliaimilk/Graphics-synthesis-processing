@@ -30,6 +30,25 @@ namespace WindowsFormsApp1
         public List<PhotoshopTiffLayerInfo> Layers { get; } = new List<PhotoshopTiffLayerInfo>();
     }
 
+    /// <summary>CMYK 图层原始分色画布，不经过 RGB 转换。</summary>
+    public sealed class PhotoshopTiffCmykLayerImage
+    {
+        public int Width { get; }
+        public int Height { get; }
+        public byte[] C { get; }
+        public byte[] M { get; }
+        public byte[] Y { get; }
+        public byte[] K { get; }
+        public byte[] A { get; }
+
+        internal PhotoshopTiffCmykLayerImage(int width, int height)
+        {
+            Width = width; Height = height;
+            int count = checked(width * height);
+            C = new byte[count]; M = new byte[count]; Y = new byte[count]; K = new byte[count]; A = new byte[count];
+        }
+    }
+
     /// <summary>
     /// 读取 Photoshop 保存的 TIFF 私有标签 37724，并按图层名称还原普通栅格图层。
     /// </summary>
@@ -92,7 +111,7 @@ namespace WindowsFormsApp1
             {
                 result.ErrorMessage = ex.Message;
             }
-
+    
             return result;
         }
 
@@ -113,6 +132,14 @@ namespace WindowsFormsApp1
                 throw new InvalidDataException($"图层“{layerName}”存在重名，无法确定要使用的图层。");
 
             return RenderRasterLayer(document, matches[0]);
+        }
+
+        /// <summary>提取 CMYK TIFF 的指定图层原始通道，供双面套图直接输出。</summary>
+        public static PhotoshopTiffCmykLayerImage RenderCmykLayer(string filePath, string layerName)
+        {
+            LayerDocument document = ReadDocument(filePath);
+            LayerRecord layer = FindSingleLayer(document, layerName);
+            return RenderCmykLayer(document, layer);
         }
 
         /// <summary>
@@ -149,6 +176,16 @@ namespace WindowsFormsApp1
                 result.Dispose();
                 throw;
             }
+        }
+
+        /// <summary>合成模板中的可见 CMYK 栅格图层，不依赖模板图层名称。</summary>
+        public static PhotoshopTiffCmykLayerImage RenderVisibleCmykLayers(string filePath)
+        {
+            LayerDocument document = ReadDocument(filePath);
+            var output = new PhotoshopTiffCmykLayerImage(document.CanvasWidth, document.CanvasHeight);
+            foreach (LayerRecord layer in document.Layers.Where(item => item.IsVisible).Reverse())
+                CompositeCmyk(output, RenderCmykLayer(document, layer));
+            return output;
         }
 
         /// <summary>
@@ -440,6 +477,49 @@ namespace WindowsFormsApp1
 
             return CreateBitmap(document.CanvasWidth, document.CanvasHeight, pixels);
         }
+
+        private static PhotoshopTiffCmykLayerImage RenderCmykLayer(LayerDocument document, LayerRecord layer)
+        {
+            var output = new PhotoshopTiffCmykLayerImage(document.CanvasWidth, document.CanvasHeight);
+            int count = checked(layer.Bounds.Width * layer.Bounds.Height);
+            byte[] c = new byte[count], m = new byte[count], y = new byte[count], k = new byte[count];
+            byte[] a = Enumerable.Repeat((byte)255, count).ToArray();
+            foreach (LayerChannelRecord channel in layer.Channels)
+            {
+                byte[] data = DecodeChannel(document, layer.Bounds.Width, layer.Bounds.Height, channel);
+                if (channel.Id == 0) c = data; else if (channel.Id == 1) m = data; else if (channel.Id == 2) y = data;
+                else if (channel.Id == 3) k = data; else if (channel.Id == -1) a = data;
+            }
+            for (int py = 0; py < layer.Bounds.Height; py++)
+            for (int px = 0; px < layer.Bounds.Width; px++)
+            {
+                int dx = layer.Bounds.Left + px, dy = layer.Bounds.Top + py;
+                if (dx < 0 || dy < 0 || dx >= output.Width || dy >= output.Height) continue;
+                int source = py * layer.Bounds.Width + px, dest = dy * output.Width + dx;
+                output.C[dest] = c[source]; output.M[dest] = m[source]; output.Y[dest] = y[source]; output.K[dest] = k[source]; output.A[dest] = a[source];
+            }
+            return output;
+        }
+
+        private static LayerRecord FindSingleLayer(LayerDocument document, string layerName)
+        {
+            var matches = document.Layers.Where(layer => string.Equals(NormalizeLayerName(layer.Name), NormalizeLayerName(layerName), StringComparison.OrdinalIgnoreCase)).ToList();
+            if (matches.Count != 1) throw new InvalidDataException(matches.Count == 0 ? $"未找到图层“{layerName}”。" : $"图层“{layerName}”存在重名。");
+            return matches[0];
+        }
+
+        private static void CompositeCmyk(PhotoshopTiffCmykLayerImage target, PhotoshopTiffCmykLayerImage source)
+        {
+            for (int i = 0; i < target.A.Length; i++)
+            {
+                int sa = source.A[i]; if (sa == 0) continue;
+                int da = target.A[i], oa = sa + da * (255 - sa) / 255;
+                target.C[i] = Blend(target.C[i], source.C[i], da, sa, oa); target.M[i] = Blend(target.M[i], source.M[i], da, sa, oa);
+                target.Y[i] = Blend(target.Y[i], source.Y[i], da, sa, oa); target.K[i] = Blend(target.K[i], source.K[i], da, sa, oa); target.A[i] = (byte)oa;
+            }
+        }
+
+        private static byte Blend(byte destination, byte source, int da, int sa, int oa) => oa == 0 ? (byte)0 : (byte)((source * sa + destination * da * (255 - sa) / 255) / oa);
 
         /// <summary>
         /// 支持 Photoshop TIFF 常见的未压缩和 PackBits RLE 图层通道。

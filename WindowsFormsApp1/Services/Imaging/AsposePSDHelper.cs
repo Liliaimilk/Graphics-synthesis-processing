@@ -213,6 +213,12 @@ namespace WindowsFormsApp1
             string exclusionMaskPath = null,
             Action controlCheckpoint = null)
         {
+            if (string.Equals(format, "TIF", StringComparison.OrdinalIgnoreCase) || string.Equals(format, "TIFF", StringComparison.OrdinalIgnoreCase))
+            {
+                ProcessCmykLayerPair(templateTifPath, materialTifPath, materialLayerName, outputPath, channelNames, compositeMode, progressCallback, controlCheckpoint);
+                return;
+            }
+
             string temporaryFolder = Path.Combine(Path.GetTempPath(), "WindowsFormsApp1", "LayerMerge");
             string token = Guid.NewGuid().ToString("N");
             string templateTemporaryPath = Path.Combine(temporaryFolder, token + "_template.png");
@@ -261,6 +267,74 @@ namespace WindowsFormsApp1
                 TryDeleteTemporaryFile(templateTemporaryPath);
                 TryDeleteTemporaryFile(materialTemporaryPath);
             }
+        }
+
+        /// <summary>双面 CMYK TIFF 专用流程：图层提取、满版合成、输出全程保留 C/M/Y/K/Alpha。</summary>
+        private static void ProcessCmykLayerPair(string templatePath, string materialPath, string materialLayerName, string outputPath, List<string> channelNames, TemplateCompositeMode mode, Action<string> progress, Action checkpoint)
+        {
+            progress?.Invoke("正在读取 CMYK 模板图层...");
+            PhotoshopTiffCmykLayerImage target = PhotoshopTiffLayerParser.RenderVisibleCmykLayers(templatePath);
+            progress?.Invoke("正在读取 CMYK 素材图层...");
+            PhotoshopTiffCmykLayerImage source = PhotoshopTiffLayerParser.RenderCmykLayer(materialPath, materialLayerName);
+            Rectangle targetBounds = GetCmykBounds(target), sourceBounds = GetCmykBounds(source);
+            if (targetBounds == Rectangle.Empty || sourceBounds == Rectangle.Empty) throw new InvalidOperationException("CMYK 图层没有可用的非透明区域。");
+            float scale = mode == TemplateCompositeMode.FullBleed ? Math.Max((float)targetBounds.Width / sourceBounds.Width, (float)targetBounds.Height / sourceBounds.Height) : 1f;
+            int sw = (int)Math.Ceiling(sourceBounds.Width * scale), sh = (int)Math.Ceiling(sourceBounds.Height * scale);
+            float left = mode == TemplateCompositeMode.FullBleed ? targetBounds.Left + (targetBounds.Width - sw) / 2f : sourceBounds.Left;
+            float top = mode == TemplateCompositeMode.FullBleed ? targetBounds.Top + (targetBounds.Height - sh) / 2f : sourceBounds.Top;
+            Rectangle draw = mode == TemplateCompositeMode.FullBleed ? targetBounds : Rectangle.Intersect(sourceBounds, new Rectangle(0, 0, target.Width, target.Height));
+            for (int y = draw.Top; y < draw.Bottom; y++)
+            {
+                if ((y - draw.Top) % 32 == 0) checkpoint?.Invoke();
+                for (int x = draw.Left; x < draw.Right; x++)
+                {
+                    int sx = sourceBounds.Left + (int)Math.Floor((x - left) / scale), sy = sourceBounds.Top + (int)Math.Floor((y - top) / scale);
+                    if (sx < sourceBounds.Left || sx >= sourceBounds.Right || sy < sourceBounds.Top || sy >= sourceBounds.Bottom) continue;
+                    BlendCmykPixel(target, y * target.Width + x, source, sy * source.Width + sx);
+                }
+            }
+            progress?.Invoke("正在写入 CMYK TIFF...");
+            SaveRawCmykTiff(target, outputPath, channelNames);
+            progress?.Invoke("完成");
+        }
+
+        private static Rectangle GetCmykBounds(PhotoshopTiffCmykLayerImage image)
+        {
+            int l = image.Width, t = image.Height, r = -1, b = -1;
+            for (int y = 0; y < image.Height; y++) for (int x = 0; x < image.Width; x++) if (image.A[y * image.Width + x] > 0) { l = Math.Min(l, x); t = Math.Min(t, y); r = Math.Max(r, x); b = Math.Max(b, y); }
+            return r < l ? Rectangle.Empty : Rectangle.FromLTRB(l, t, r + 1, b + 1);
+        }
+
+        private static void BlendCmykPixel(PhotoshopTiffCmykLayerImage target, int d, PhotoshopTiffCmykLayerImage source, int s)
+        {
+            int sa = source.A[s] * target.A[d] / 255; if (sa == 0) return; int da = target.A[d], oa = sa + da * (255 - sa) / 255;
+            target.C[d] = BlendCmyk(target.C[d], source.C[s], da, sa, oa); target.M[d] = BlendCmyk(target.M[d], source.M[s], da, sa, oa); target.Y[d] = BlendCmyk(target.Y[d], source.Y[s], da, sa, oa); target.K[d] = BlendCmyk(target.K[d], source.K[s], da, sa, oa); target.A[d] = (byte)oa;
+        }
+        private static byte BlendCmyk(byte d, byte s, int da, int sa, int oa) => oa == 0 ? (byte)0 : (byte)((s * sa + d * da * (255 - sa) / 255) / oa);
+
+        private static void SaveRawCmykTiff(PhotoshopTiffCmykLayerImage image, string outputPath, List<string> channelNames)
+        {
+            var names = (channelNames ?? new List<string>()).Select(n => n ?? string.Empty).ToList(); bool alpha = image.A.Any(a => a < 255); int samples = 4 + names.Count + (alpha ? 1 : 0);
+            using (Tiff tif = Tiff.Open(outputPath, "w"))
+            {
+                tif.SetField(TiffTag.IMAGEWIDTH, image.Width); tif.SetField(TiffTag.IMAGELENGTH, image.Height); tif.SetField(TiffTag.SAMPLESPERPIXEL, samples); tif.SetField(TiffTag.BITSPERSAMPLE, 8); tif.SetField(TiffTag.PHOTOMETRIC, Photometric.SEPARATED); tif.SetField(TiffTag.INKSET, InkSet.CMYK); tif.SetField(TiffTag.PLANARCONFIG, PlanarConfig.CONTIG); tif.SetField(TiffTag.COMPRESSION, Compression.LZW); tif.SetField(TiffTag.XRESOLUTION, OutputDpi); tif.SetField(TiffTag.YRESOLUTION, OutputDpi); tif.SetField(TiffTag.RESOLUTIONUNIT, 2);
+                if (alpha || names.Count > 0) { short[] extras = new short[samples - 4]; int n = 0; if (alpha) extras[n++] = (short)ExtraSample.UNASSALPHA; while (n < extras.Length) extras[n++] = (short)ExtraSample.UNSPECIFIED; tif.SetField(TiffTag.EXTRASAMPLES, extras.Length, extras); }
+                // EXTRASAMPLES 只定义通道类型；Photoshop 读取自定义名称依赖 34377 图像资源块。
+                var photoshopChannelNames = new List<string>();
+                if (alpha) photoshopChannelNames.Add("Alpha");
+                photoshopChannelNames.AddRange(names);
+                TryWritePhotoshopChannelNames(tif, photoshopChannelNames);
+                byte[] row = new byte[image.Width * samples]; for (int y = 0; y < image.Height; y++) { for (int x = 0; x < image.Width; x++) { int p = y * image.Width + x, o = x * samples; byte pixelAlpha = image.A[p]; // Photoshop 图层通道以白色表示无墨，写入 TIFF 分色时需反相；同时按 Alpha 减墨，防止透明底被写成满墨黑色。
+                    row[o] = ConvertPhotoshopCmykToTiffInk(image.C[p], pixelAlpha); row[o+1] = ConvertPhotoshopCmykToTiffInk(image.M[p], pixelAlpha); row[o+2] = ConvertPhotoshopCmykToTiffInk(image.Y[p], pixelAlpha); row[o+3] = ConvertPhotoshopCmykToTiffInk(image.K[p], pixelAlpha); int e=4; if(alpha)row[o+e++]=pixelAlpha; for(int i=0;i<names.Count;i++)row[o+e++]=(byte)(255-pixelAlpha); } tif.WriteScanline(row,y); }
+            }
+        }
+
+        /// <summary>
+        /// 将 Photoshop 图层通道的白色无墨极性转换为 TIFF 墨量，并消除透明区域的底墨。
+        /// </summary>
+        private static byte ConvertPhotoshopCmykToTiffInk(byte photoshopChannel, byte alpha)
+        {
+            return (byte)((255 - photoshopChannel) * alpha / 255);
         }
 
         /// <summary>

@@ -745,20 +745,21 @@ namespace WindowsFormsApp1
             btnMerge.FlatAppearance.MouseOverBackColor = Color.FromArgb(55, 120, 180);
             btnMerge.Click += BtnMerge_Click;
 
-            btnParseTiffLayers = new Button
-            {
-                Text = "解析TIFF图层",
-                Location = new Point(startX + 230, startY),
-                Size = new Size(120, 36),
-                Font = new Font("微软雅黑", 9F),
-                BackColor = Color.FromArgb(55, 85, 120),
-                ForeColor = Color.FromArgb(220, 225, 235),
-                FlatStyle = FlatStyle.Flat,
-                Cursor = Cursors.Hand
-            };
-            btnParseTiffLayers.FlatAppearance.BorderColor = Color.FromArgb(70, 140, 200);
-            btnParseTiffLayers.FlatAppearance.MouseOverBackColor = Color.FromArgb(70, 110, 155);
-            btnParseTiffLayers.Click += BtnParseTiffLayers_Click;
+            // 测试加载tiff图层
+            // btnParseTiffLayers = new Button
+            // {
+            //     Text = "解析TIFF图层",
+            //     Location = new Point(startX + 230, startY),
+            //     Size = new Size(120, 36),
+            //     Font = new Font("微软雅黑", 9F),
+            //     BackColor = Color.FromArgb(55, 85, 120),
+            //     ForeColor = Color.FromArgb(220, 225, 235),
+            //     FlatStyle = FlatStyle.Flat,
+            //     Cursor = Cursors.Hand
+            // };
+            // btnParseTiffLayers.FlatAppearance.BorderColor = Color.FromArgb(70, 140, 200);
+            // btnParseTiffLayers.FlatAppearance.MouseOverBackColor = Color.FromArgb(70, 110, 155);
+            // btnParseTiffLayers.Click += BtnParseTiffLayers_Click;
 
             btnClose = new Button
             {
