@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Drawing;
 using System.IO;
 using System.Linq;
 using System.Windows.Forms;
@@ -39,9 +40,30 @@ namespace WindowsFormsApp1
                 dialog.Owner = this;
                 if (dialog.ShowDialog(this) == DialogResult.OK && !string.IsNullOrEmpty(dialog.ResultPath))
                 {
+                    if (IsTooLargeForCanvasPreview(dialog.ResultCanvasSize))
+                    {
+                        lblStatus.Text = $"排版已输出：{Path.GetFileName(dialog.ResultPath)}（尺寸过大，未自动导入画布）";
+                        MessageBox.Show(
+                            "排版 TIFF 已成功输出。该大图尺寸超过画布安全预览上限，已跳过自动导入以避免数组溢出。",
+                            "排版完成",
+                            MessageBoxButtons.OK,
+                            MessageBoxIcon.Information);
+                        return;
+                    }
+
                     LoadResultToCanvasCore(dialog.ResultPath);
                 }
             }
+        }
+
+        /// <summary>
+        /// 判断排版结果是否超过画布一次性解码的安全上限，避免输出成功后自动预览再次耗尽内存。
+        /// </summary>
+        private static bool IsTooLargeForCanvasPreview(Size canvasSize)
+        {
+            const long maxPreviewBytes = 512L * 1024L * 1024L;
+            return canvasSize.Width <= 0 || canvasSize.Height <= 0 ||
+                (long)canvasSize.Width * canvasSize.Height * 4L > maxPreviewBytes;
         }
 
         /// <summary>

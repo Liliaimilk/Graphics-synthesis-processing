@@ -4,6 +4,8 @@ using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
+using BitMiracle.LibTiff.Classic;
 using Bitmap = System.Drawing.Bitmap;
 using Graphics = System.Drawing.Graphics;
 using Rectangle = System.Drawing.Rectangle;
@@ -62,12 +64,13 @@ namespace WindowsFormsApp1
 
         private const int MaxBitmapDimensionPx = 65000;
         private const long MaxCanvasBytes = 1024L * 1024L * 1024L;
+        private const int OutputStripHeightPx = 256;
 
         /// <summary>
         /// 将毫米版式参数换算为像素坐标，并生成全部格位的固定位置。
         /// 在此阶段统一验证画布、间距和格位是否超出大图边界。
         /// </summary>
-        public static PreparedLayout PrepareLayout(SheetLayoutSettings settings)
+        public static PreparedLayout PrepareLayout(SheetLayoutSettings settings, bool validateCanvasCapacity = true)
         {
             if (settings == null)
                 throw new ArgumentNullException(nameof(settings));
@@ -97,7 +100,9 @@ namespace WindowsFormsApp1
             int gapX = MmToPixels(settings.HorizontalGapMm, settings.Dpi);
             int gapY = MmToPixels(settings.VerticalGapMm, settings.Dpi);
 
-            ValidateCanvasCapacity(canvasWidth, canvasHeight);
+            // 预览只绘制缩略图，不会创建原始尺寸位图；实际输出仍必须执行内存保护。
+            if (validateCanvasCapacity)
+                ValidateCanvasCapacity(canvasWidth, canvasHeight);
 
             int lastRight = startX + settings.Columns * slotWidth + Math.Max(0, settings.Columns - 1) * gapX;
             int lastBottom = startY + settings.Rows * slotHeight + Math.Max(0, settings.Rows - 1) * gapY;
@@ -208,7 +213,7 @@ namespace WindowsFormsApp1
         {
             foreach (string imagePath in imagePaths ?? Enumerable.Empty<string>())
             {
-                using (var preview = AsposePSDHelper.GeneratePreview(imagePath))
+                using (var preview = AsposePSDHelper.GenerateLayoutPreview(imagePath))
                 {
                     if (preview == null)
                         throw new InvalidOperationException($"图片无法读取或格式不兼容: {Path.GetFileName(imagePath)}");
@@ -236,7 +241,8 @@ namespace WindowsFormsApp1
             if (string.IsNullOrWhiteSpace(request.OutputFolder) || !Directory.Exists(request.OutputFolder))
                 throw new DirectoryNotFoundException("大图输出目录无效");
 
-            PreparedLayout prepared = PrepareLayout(request.Settings);
+            // 超大画布改由条带式 TIFF 写出，不再因完整 Bitmap 的内存保护而中断。
+            PreparedLayout prepared = PrepareLayout(request.Settings, validateCanvasCapacity: false);
             if (imageFiles.Count > prepared.Capacity) 
                 throw new InvalidOperationException($"当前版式容量不足，最多可放 {prepared.Capacity} 张，实际找到 {imageFiles.Count} 张");
 
@@ -252,6 +258,21 @@ namespace WindowsFormsApp1
                 slotGuidePath = NextOutputFile(request.OutputFolder, outputFileName + "_格子定位", ".tif");
                 progressCallback?.Invoke("正在导出格子定位图...");
                 ExportSlotGuide(prepared, slotGuidePath);
+            }
+
+            if (RequiresStripOutput(prepared))
+            {
+                progressCallback?.Invoke("正在以条带方式输出超大 TIFF...");
+                ExportLayoutStreaming(prepared, imageFiles, outputPath, false, progressCallback);
+                progressCallback?.Invoke("排版完成");
+                return new LayoutOutputResult
+                {
+                    OutputPath = outputPath,
+                    SlotGuidePath = slotGuidePath,
+                    PlacedImageCount = imageFiles.Count,
+                    CanvasSize = new Size(prepared.CanvasWidthPx, prepared.CanvasHeightPx),
+                    Slots = prepared.Slots.AsReadOnly()
+                };
             }
 
             progressCallback?.Invoke("正在创建大图画布...");
@@ -312,6 +333,12 @@ namespace WindowsFormsApp1
         /// </summary>
         private static void ExportSlotGuide(PreparedLayout prepared, string outputPath)
         {
+            if (RequiresStripOutput(prepared))
+            {
+                ExportLayoutStreaming(prepared, Array.Empty<string>(), outputPath, true, null);
+                return;
+            }
+
             using (var canvas = new Bitmap(prepared.CanvasWidthPx, prepared.CanvasHeightPx, System.Drawing.Imaging.PixelFormat.Format32bppArgb))
             {
                 canvas.SetResolution(prepared.Dpi, prepared.Dpi);
@@ -344,6 +371,222 @@ namespace WindowsFormsApp1
                     graphics.DrawRectangle(pen, slot.Left, slot.Top, width, height);
                 }
             }
+        }
+
+        /// <summary>
+        /// 判断当前画布是否不适合创建完整的 32 位位图，需要切换为低内存条带输出。
+        /// </summary>
+        private static bool RequiresStripOutput(PreparedLayout prepared)
+        {
+            long rawBytes = (long)prepared.CanvasWidthPx * prepared.CanvasHeightPx * 4L;
+            return prepared.CanvasWidthPx > MaxBitmapDimensionPx
+                || prepared.CanvasHeightPx > MaxBitmapDimensionPx
+                || rawBytes > MaxCanvasBytes;
+        }
+
+        /// <summary>
+        /// 分条渲染并写入 CMYK TIFF。每次仅保留一条小画布，避免超大排版图占满托管与 GDI 内存。
+        /// </summary>
+        private static void ExportLayoutStreaming(
+            PreparedLayout prepared,
+            IReadOnlyList<string> imageFiles,
+            string outputPath,
+            bool drawSlotBounds,
+            Action<string> progressCallback)
+        {
+            var placedImages = new List<PlacedLayoutImage>();
+            for (int i = 0; i < imageFiles.Count; i++)
+            {
+                using (Bitmap source = AsposePSDHelper.LoadBitmapForLayout(imageFiles[i]))
+                {
+                    placedImages.Add(new PlacedLayoutImage
+                    {
+                        Path = imageFiles[i],
+                        Target = CalculateContainRect(source.Size, prepared.Slots[i])
+                    });
+                }
+            }
+
+            const int colorSamples = 4;
+            const int extraSamples = 3; // Alpha + 两个专色占位通道
+            int totalSamples = colorSamples + extraSamples;
+            int stripCount = (prepared.CanvasHeightPx + OutputStripHeightPx - 1) / OutputStripHeightPx;
+
+            using (Tiff tif = Tiff.Open(outputPath, "w"))
+            {
+                if (tif == null)
+                    throw new InvalidOperationException("无法创建 TIFF 输出文件。");
+
+                tif.SetField(TiffTag.IMAGEWIDTH, prepared.CanvasWidthPx);
+                tif.SetField(TiffTag.IMAGELENGTH, prepared.CanvasHeightPx);
+                tif.SetField(TiffTag.SAMPLESPERPIXEL, totalSamples);
+                tif.SetField(TiffTag.BITSPERSAMPLE, 8);
+                tif.SetField(TiffTag.ORIENTATION, Orientation.TOPLEFT);
+                tif.SetField(TiffTag.PHOTOMETRIC, Photometric.SEPARATED);
+                tif.SetField(TiffTag.INKSET, InkSet.CMYK);
+                tif.SetField(TiffTag.PLANARCONFIG, PlanarConfig.CONTIG);
+                tif.SetField(TiffTag.COMPRESSION, Compression.LZW);
+                tif.SetField(TiffTag.RESOLUTIONUNIT, 2);
+                tif.SetField(TiffTag.XRESOLUTION, (double)prepared.Dpi);
+                tif.SetField(TiffTag.YRESOLUTION, (double)prepared.Dpi);
+                tif.SetField(TiffTag.ROWSPERSTRIP, Math.Min(prepared.CanvasHeightPx, OutputStripHeightPx));
+                tif.SetField(TiffTag.EXTRASAMPLES, extraSamples, new short[]
+                {
+                    (short)ExtraSample.UNASSALPHA,
+                    (short)ExtraSample.UNSPECIFIED,
+                    (short)ExtraSample.UNSPECIFIED
+                });
+                AsposePSDHelper.WritePhotoshopChannelNames(tif, new List<string>
+                {
+                    "Alpha", WhiteInkChannelName, VarnishChannelName
+                });
+
+                for (int stripIndex = 0; stripIndex < stripCount; stripIndex++)
+                {
+                    int stripTop = stripIndex * OutputStripHeightPx;
+                    int stripHeight = Math.Min(OutputStripHeightPx, prepared.CanvasHeightPx - stripTop);
+                    Rectangle stripBounds = new Rectangle(0, stripTop, prepared.CanvasWidthPx, stripHeight);
+                    progressCallback?.Invoke($"正在写入 TIFF 条带 {stripIndex + 1}/{stripCount}...");
+
+                    using (var strip = new Bitmap(prepared.CanvasWidthPx, stripHeight, System.Drawing.Imaging.PixelFormat.Format32bppArgb))
+                    using (Graphics graphics = Graphics.FromImage(strip))
+                    {
+                        ConfigureLayoutGraphics(graphics);
+                        graphics.Clear(Color.Transparent);
+
+                        foreach (PlacedLayoutImage image in placedImages.Where(item => item.Target.IntersectsWith(stripBounds)))
+                        {
+                            using (Bitmap source = AsposePSDHelper.LoadBitmapForLayout(image.Path))
+                            {
+                                Rectangle localTarget = image.Target;
+                                localTarget.Y -= stripTop;
+                                graphics.DrawImage(source, localTarget);
+                            }
+                        }
+
+                        if (drawSlotBounds)
+                            DrawSlotBoundsInStrip(graphics, prepared.Slots, prepared.Dpi, stripTop, stripBounds);
+
+                        WriteStripScanlines(tif, strip, stripTop, totalSamples);
+                    }
+                }
+            }
+        }
+
+        /// <summary>
+        /// 统一条带画布与原有整图排版的绘制质量设置，保证两种输出的缩放效果一致。
+        /// </summary>
+        private static void ConfigureLayoutGraphics(Graphics graphics)
+        {
+            graphics.CompositingMode = CompositingMode.SourceOver;
+            graphics.CompositingQuality = CompositingQuality.HighQuality;
+            graphics.InterpolationMode = InterpolationMode.HighQualityBicubic;
+            graphics.PixelOffsetMode = PixelOffsetMode.HighQuality;
+            graphics.SmoothingMode = SmoothingMode.HighQuality;
+        }
+
+        /// <summary>
+        /// 在局部条带坐标中绘制与当前条带相交的格位边框。
+        /// </summary>
+        private static void DrawSlotBoundsInStrip(Graphics graphics, IEnumerable<Rectangle> slots, int dpi, int stripTop, Rectangle stripBounds)
+        {
+            float lineWidth = Math.Max(1f, dpi * 0.3f / 25.4f);
+            using (var pen = new Pen(Color.Magenta, lineWidth))
+            {
+                foreach (Rectangle slot in slots.Where(slot => slot.IntersectsWith(stripBounds)))
+                {
+                    graphics.DrawRectangle(pen, slot.Left, slot.Top - stripTop,
+                        Math.Max(1, slot.Width - 1), Math.Max(1, slot.Height - 1));
+                }
+            }
+        }
+
+        /// <summary>
+        /// 将 ARGB 条带逐行转为 CMYK、Alpha 和专色通道后直接写入 TIFF。
+        /// </summary>
+        private static void WriteStripScanlines(Tiff tif, Bitmap strip, int outputTop, int totalSamples)
+        {
+            var bounds = new Rectangle(0, 0, strip.Width, strip.Height);
+            var data = strip.LockBits(bounds, System.Drawing.Imaging.ImageLockMode.ReadOnly,
+                System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+            try
+            {
+                int sourceRowBytes = strip.Width * 4;
+                byte[] sourceRow = new byte[sourceRowBytes];
+                byte[] scanline = new byte[strip.Width * totalSamples];
+
+                for (int y = 0; y < strip.Height; y++)
+                {
+                    IntPtr rowPointer = data.Stride >= 0
+                        ? IntPtr.Add(data.Scan0, y * data.Stride)
+                        : IntPtr.Add(data.Scan0, (strip.Height - 1 - y) * -data.Stride);
+                    Marshal.Copy(rowPointer, sourceRow, 0, sourceRowBytes);
+
+                    for (int x = 0; x < strip.Width; x++)
+                    {
+                        int sourceIndex = x * 4;
+                        int destinationIndex = x * totalSamples;
+                        byte alpha = sourceRow[sourceIndex + 3];
+                        byte r = CompositeChannelOverWhite(sourceRow[sourceIndex + 2], alpha);
+                        byte g = CompositeChannelOverWhite(sourceRow[sourceIndex + 1], alpha);
+                        byte b = CompositeChannelOverWhite(sourceRow[sourceIndex], alpha);
+
+                        ConvertRgbToCmyk(r, g, b,
+                            out scanline[destinationIndex],
+                            out scanline[destinationIndex + 1],
+                            out scanline[destinationIndex + 2],
+                            out scanline[destinationIndex + 3]);
+                        scanline[destinationIndex + 4] = alpha;
+                        scanline[destinationIndex + 5] = (byte)(255 - alpha);
+                        scanline[destinationIndex + 6] = (byte)(255 - alpha);
+                    }
+
+                    tif.WriteScanline(scanline, outputTop + y);
+                }
+            }
+            finally
+            {
+                strip.UnlockBits(data);
+            }
+        }
+
+        /// <summary>
+        /// 将半透明像素预合成至白色 CMYK 底板，避免透明 RGB 零值被转换为黑色。
+        /// </summary>
+        private static byte CompositeChannelOverWhite(byte channel, byte alpha)
+        {
+            return (byte)((channel * alpha + 255 * (255 - alpha) + 127) / 255);
+        }
+
+        /// <summary>
+        /// 使用与现有 TIFF 输出一致的基础 RGB 转 CMYK 公式。
+        /// </summary>
+        private static void ConvertRgbToCmyk(byte r, byte g, byte b, out byte c, out byte m, out byte y, out byte k)
+        {
+            int max = Math.Max(r, Math.Max(g, b));
+            int black = 255 - max;
+            k = (byte)black;
+            if (black >= 255)
+            {
+                c = 0;
+                m = 0;
+                y = 0;
+                return;
+            }
+
+            int denominator = 255 - black;
+            c = (byte)((255 - r - black) * 255 / denominator);
+            m = (byte)((255 - g - black) * 255 / denominator);
+            y = (byte)((255 - b - black) * 255 / denominator);
+        }
+
+        /// <summary>
+        /// 保存条带渲染所需的源文件与其在整张大图中的目标位置。
+        /// </summary>
+        private sealed class PlacedLayoutImage
+        {
+            public string Path { get; set; }
+            public Rectangle Target { get; set; }
         }
 
         /// <summary>

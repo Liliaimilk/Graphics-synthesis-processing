@@ -434,7 +434,23 @@ namespace WindowsFormsApp1
         /// </summary>
         public static Bitmap LoadBitmapForLayout(string imagePath)
         {
+            if (string.Equals(Path.GetExtension(imagePath), ".tif", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(Path.GetExtension(imagePath), ".tiff", StringComparison.OrdinalIgnoreCase))
+            {
+                // 排版仅需要 TIFF 的最终可见栅格。不要尝试 Photoshop 图层重建，
+                // 否则部分 CMYK 分层 TIFF 会在 ARGB 重组阶段产生色彩偏移。
+                return CreateBitmapFromArgbPixelsForLayout(LoadTiffRasterPixelDataForLayout(imagePath));
+            }
+
             return LoadBitmapPreserveColor(imagePath);
+        }
+
+        /// <summary>
+        /// 生成排版窗口专用缩略图，确保预览和实际排版使用同一条 TIFF 读取链路。
+        /// </summary>
+        public static Bitmap GenerateLayoutPreview(string imagePath)
+        {
+            return LoadBitmapForLayout(imagePath);
         }
 
         /// <summary>
@@ -554,6 +570,36 @@ namespace WindowsFormsApp1
             }
 
             return pixelData;
+        }
+
+        /// <summary>
+        /// 读取排版素材的最终 TIFF 栅格，保留透明度恢复逻辑但跳过 Photoshop 图层像素重组。
+        /// </summary>
+        private static ImagePixelData LoadTiffRasterPixelDataForLayout(string tifPath)
+        {
+            var pixelData = TryLoadTiffRasterPixelData(tifPath);
+            var opaqueBounds = GetOpaqueBounds(pixelData.Pixels, pixelData.Width, pixelData.Height);
+            if (opaqueBounds != Rectangle.Empty &&
+                opaqueBounds.Width == pixelData.Width &&
+                opaqueBounds.Height == pixelData.Height)
+            {
+                var maskedData = TryLoadTiffPixelDataWithWhiteMask(tifPath);
+                if (maskedData != null)
+                    return maskedData;
+            }
+
+            return pixelData;
+        }
+
+        /// <summary>
+        /// 将排版读取到的像素数据封装为可绘制位图。
+        /// </summary>
+        private static Bitmap CreateBitmapFromArgbPixelsForLayout(ImagePixelData pixelData)
+        {
+            if (pixelData == null)
+                throw new ArgumentNullException(nameof(pixelData));
+
+            return CreateBitmapFromArgbPixels(pixelData.Width, pixelData.Height, pixelData.Pixels);
         }
 
         /// <summary>
@@ -1676,6 +1722,14 @@ namespace WindowsFormsApp1
             {
                 Console.WriteLine($"写入 Photoshop 通道名称资源失败，继续输出 TIFF: {ex.Message}");
             }
+        }
+
+        /// <summary>
+        /// 为外部流式 TIFF 输出写入 Photoshop 可识别的额外通道名称。
+        /// </summary>
+        public static void WritePhotoshopChannelNames(Tiff tif, List<string> channelNames)
+        {
+            TryWritePhotoshopChannelNames(tif, channelNames);
         }
 
         /// <summary>
