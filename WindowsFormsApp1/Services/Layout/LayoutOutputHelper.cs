@@ -65,6 +65,7 @@ namespace WindowsFormsApp1
         private const int MaxBitmapDimensionPx = 65000;
         private const long MaxCanvasBytes = 1024L * 1024L * 1024L;
         private const int OutputStripHeightPx = 256;
+        private const long MaxCachedSourceBytes = 384L * 1024L * 1024L;
 
         /// <summary>
         /// 将毫米版式参数换算为像素坐标，并生成全部格位的固定位置。
@@ -301,7 +302,7 @@ namespace WindowsFormsApp1
                         {
                             // 先按等比缩放把素材完整塞进格位，再居中绘制。
                             Rectangle targetRect = CalculateContainRect(source.Size, slot);
-                            graphics.DrawImage(source, targetRect);
+                            OpenCvLayoutRenderer.DrawIntoStrip(source, canvas, targetRect, 0);
                         }
                     }
 
@@ -415,6 +416,7 @@ namespace WindowsFormsApp1
             int totalSamples = colorSamples + extraSamples;
             int stripCount = (prepared.CanvasHeightPx + OutputStripHeightPx - 1) / OutputStripHeightPx;
 
+            using (var sourceCache = new LayoutSourceBitmapCache(MaxCachedSourceBytes))
             using (Tiff tif = Tiff.Open(outputPath, "w"))
             {
                 if (tif == null)
@@ -459,11 +461,16 @@ namespace WindowsFormsApp1
 
                         foreach (PlacedLayoutImage image in placedImages.Where(item => item.Target.IntersectsWith(stripBounds)))
                         {
-                            using (Bitmap source = AsposePSDHelper.LoadBitmapForLayout(image.Path))
+                            bool disposeAfterUse;
+                            Bitmap source = sourceCache.Acquire(image.Path, out disposeAfterUse);
+                            try
                             {
-                                Rectangle localTarget = image.Target;
-                                localTarget.Y -= stripTop;
-                                graphics.DrawImage(source, localTarget);
+                                OpenCvLayoutRenderer.DrawIntoStrip(source, strip, image.Target, stripTop);
+                            }
+                            finally
+                            {
+                                if (disposeAfterUse)
+                                    source.Dispose();
                             }
                         }
 
@@ -590,6 +597,86 @@ namespace WindowsFormsApp1
         {
             public string Path { get; set; }
             public Rectangle Target { get; set; }
+        }
+
+        /// <summary>
+        /// 为条带输出缓存最近使用的解码素材，减少同一图片跨条带时的重复磁盘读取。
+        /// </summary>
+        private sealed class LayoutSourceBitmapCache : IDisposable
+        {
+            private readonly long maxBytes;
+            private readonly Dictionary<string, CachedLayoutBitmap> cachedImages = new Dictionary<string, CachedLayoutBitmap>(StringComparer.OrdinalIgnoreCase);
+            private readonly LinkedList<string> usageOrder = new LinkedList<string>();
+            private long usedBytes;
+
+            public LayoutSourceBitmapCache(long maxBytes)
+            {
+                this.maxBytes = maxBytes;
+            }
+
+            /// <summary>
+            /// 获取可复用素材；大于缓存上限的单张素材交由调用方在本次使用后立即释放。
+            /// </summary>
+            public Bitmap Acquire(string imagePath, out bool disposeAfterUse)
+            {
+                CachedLayoutBitmap cached;
+                if (cachedImages.TryGetValue(imagePath, out cached))
+                {
+                    usageOrder.Remove(cached.UsageNode);
+                    usageOrder.AddLast(cached.UsageNode);
+                    disposeAfterUse = false;
+                    return cached.Bitmap;
+                }
+
+                Bitmap bitmap = AsposePSDHelper.LoadBitmapForLayout(imagePath);
+                long bitmapBytes = (long)bitmap.Width * bitmap.Height * 4L;
+                if (bitmapBytes > maxBytes)
+                {
+                    disposeAfterUse = true;
+                    return bitmap;
+                }
+
+                while (usedBytes + bitmapBytes > maxBytes && usageOrder.First != null)
+                {
+                    string oldestPath = usageOrder.First.Value;
+                    CachedLayoutBitmap oldest = cachedImages[oldestPath];
+                    usageOrder.RemoveFirst();
+                    cachedImages.Remove(oldestPath);
+                    usedBytes -= oldest.Bytes;
+                    oldest.Bitmap.Dispose();
+                }
+
+                var node = usageOrder.AddLast(imagePath);
+                cachedImages.Add(imagePath, new CachedLayoutBitmap
+                {
+                    Bitmap = bitmap,
+                    Bytes = bitmapBytes,
+                    UsageNode = node
+                });
+                usedBytes += bitmapBytes;
+                disposeAfterUse = false;
+                return bitmap;
+            }
+
+            /// <summary>
+            /// 释放本次条带输出保留的所有缓存位图。
+            /// </summary>
+            public void Dispose()
+            {
+                foreach (CachedLayoutBitmap cached in cachedImages.Values)
+                    cached.Bitmap.Dispose();
+
+                cachedImages.Clear();
+                usageOrder.Clear();
+                usedBytes = 0;
+            }
+
+            private sealed class CachedLayoutBitmap
+            {
+                public Bitmap Bitmap { get; set; }
+                public long Bytes { get; set; }
+                public LinkedListNode<string> UsageNode { get; set; }
+            }
         }
 
         /// <summary>
