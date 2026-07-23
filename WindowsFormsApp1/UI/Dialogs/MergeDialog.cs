@@ -87,6 +87,7 @@ namespace WindowsFormsApp1
             public string TemplatePath { get; set; }
             public string MaterialPath { get; set; }
             public string OutputPath { get; set; }
+            public string DisplayName { get; set; }
             public string FaceName { get; set; }
             public string TemplateLayerName { get; set; }
             public string MaterialLayerName { get; set; }
@@ -382,24 +383,25 @@ namespace WindowsFormsApp1
             {
                 string templateName;
                 string materialName;
-                if (!TrySplitRemotePairName(pairName, templateFiles, out templateName, out materialName, out errorMessage))
+                string currentError;
+                if (!TrySplitRemotePairName(pairName, templateFiles, out templateName, out materialName, out currentError))
                 {
-                    return null;
+                    jobs.Add(CreateUnmatchedRemoteJob(index++, pairName, "未匹配到模版: " + currentError));
+                    continue;
                 }
 
-                string currentError;
                 string templateFile = ResolveSingleFileByBaseName(templateFiles, templateName, "模版", out currentError);
                 if (templateFile == null)
                 {
-                    errorMessage = currentError;
-                    return null;
+                    jobs.Add(CreateUnmatchedRemoteJob(index++, pairName, "未匹配到模版: " + currentError));
+                    continue;
                 }
 
                 string materialFile = ResolveSingleFileByBaseName(materialFiles, materialName, "素材", out currentError);
                 if (materialFile == null)
                 {
-                    errorMessage = currentError;
-                    return null;
+                    jobs.Add(CreateUnmatchedRemoteJob(index++, pairName, "未匹配到素材: " + currentError));
+                    continue;
                 }
 
                 string baseName = GetBaseName(templateFile) + separator + GetBaseName(materialFile);
@@ -408,6 +410,7 @@ namespace WindowsFormsApp1
                     Index = index++,
                     TemplatePath = templateFile,
                     MaterialPath = materialFile,
+                    DisplayName = pairName,
                     OutputPath = NextOutputFile(txtSavePath.Text, baseName, ext),
                     Status = MergeJobStatus.Pending,
                     Message = "等待处理"
@@ -418,7 +421,7 @@ namespace WindowsFormsApp1
             return new BuildJobsResult
             {
                 IsBatchMode = jobs.Count > 1,
-                TemplateFile = jobs[0].TemplatePath,
+                TemplateFile = jobs.FirstOrDefault(job => job.Status != MergeJobStatus.Skipped)?.TemplatePath,
                 Jobs = jobs,
                 Format = format,
                 CompositeMode = compositeMode,
@@ -426,6 +429,21 @@ namespace WindowsFormsApp1
                 ExclusionMaskPath = null,
                 Rotation = null,
                 Mirror = null
+            };
+        }
+
+        /// <summary>
+        /// 将 WS 组合名匹配失败记录为可见的已跳过任务，避免影响同批其他组合继续执行。
+        /// </summary>
+        private MergeJobItem CreateUnmatchedRemoteJob(int index, string pairName, string message)
+        {
+            return new MergeJobItem
+            {
+                Index = index,
+                DisplayName = pairName,
+                MaterialPath = pairName,
+                Status = MergeJobStatus.Skipped,
+                Message = message
             };
         }
 
@@ -1518,10 +1536,10 @@ namespace WindowsFormsApp1
                 foreach (MergeJobItem job in jobs)
                 {
                     var item = new ListViewItem(job.Index.ToString());
-                    item.SubItems.Add(Path.GetFileName(job.MaterialPath));
+                    item.SubItems.Add(job.DisplayName ?? Path.GetFileName(job.MaterialPath));
                     item.SubItems.Add(job.FaceName ?? "单面");
                     item.SubItems.Add(GetStatusText(job.Status));
-                    item.SubItems.Add(Path.GetFileName(job.OutputPath));
+                    item.SubItems.Add(string.IsNullOrWhiteSpace(job.OutputPath) ? "-" : Path.GetFileName(job.OutputPath));
                     item.SubItems.Add(job.Message ?? string.Empty);
                     item.Tag = job;
                     job.ListItem = item;
@@ -1722,6 +1740,10 @@ namespace WindowsFormsApp1
 
             foreach (MergeJobItem job in buildResult.Jobs)
             {
+                // WS 组合名构建阶段已确认无法匹配的任务无需再次预检，保留原始提示即可。
+                if (job.Status == MergeJobStatus.Skipped)
+                    continue;
+
                 if (buildResult.IsBatchMode)
                 {
                     UpdateJobStatus(job, MergeJobStatus.Validating, "预检中...");

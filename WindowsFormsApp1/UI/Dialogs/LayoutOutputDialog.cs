@@ -64,6 +64,7 @@ namespace WindowsFormsApp1
             "layout-output-cache.txt");
 
         public string ResultPath { get; private set; }
+        public Size ResultCanvasSize { get; private set; }
 
         public LayoutOutputDialog()
         {
@@ -649,7 +650,8 @@ namespace WindowsFormsApp1
                 LayoutOutputHelper.PreparedLayout prepared;
                 try
                 {
-                    prepared = LayoutOutputHelper.PrepareLayout(settings);
+                    // 右侧预览始终按控件大小绘制缩略图，不能因实际输出画布过大而被阻止。
+                    prepared = LayoutOutputHelper.PrepareLayout(settings, validateCanvasCapacity: false);
                 }
                 catch (ArgumentException ex)
                 {
@@ -935,7 +937,7 @@ namespace WindowsFormsApp1
             try
             {
                 // 生成预览图
-                using (Bitmap preview = AsposePSDHelper.GeneratePreview(imagePath))
+                using (Bitmap preview = AsposePSDHelper.GenerateLayoutPreview(imagePath))
                 {
                     if (preview == null)
                         return null;
@@ -979,6 +981,7 @@ namespace WindowsFormsApp1
                 SetBusyState(true);
                 LayoutOutputResult result = await Task.Run(() => LayoutOutputHelper.Execute(request, UpdateStatusSafe));
                 ResultPath = result.OutputPath;
+                ResultCanvasSize = result.CanvasSize;
                 lblStatus.Text = string.IsNullOrWhiteSpace(result.SlotGuidePath)
                     ? $"排版完成，已输出 {Path.GetFileName(ResultPath)}"
                     : $"已先输出定位图，再输出正式图：{Path.GetFileName(ResultPath)}";
