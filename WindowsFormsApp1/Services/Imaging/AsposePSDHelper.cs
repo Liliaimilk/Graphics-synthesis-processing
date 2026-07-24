@@ -722,48 +722,48 @@ namespace WindowsFormsApp1
         /// </summary>
         private static ImagePixelData TryLoadTiffRasterPixelData(string tifPath)
         {
-            try
-            {
-                using (var image = Aspose.PSD.Image.Load(tifPath))
-                {
-                    var raster = image as Aspose.PSD.RasterImage;
-                    if (raster != null)
-                    {
-                        var rect = new Aspose.PSD.Rectangle(0, 0, raster.Width, raster.Height);
-                        return new ImagePixelData(raster.Width, raster.Height, raster.LoadArgb32Pixels(rect));
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"Aspose.PSD 读取 TIFF 失败，转入备用路径: {ex.Message}");
-            }
+            // try
+            // {
+            //     using (var image = Aspose.PSD.Image.Load(tifPath))
+            //     {
+            //         var raster = image as Aspose.PSD.RasterImage;
+            //         if (raster != null)
+            //         {
+            //             var rect = new Aspose.PSD.Rectangle(0, 0, raster.Width, raster.Height);
+            //             return new ImagePixelData(raster.Width, raster.Height, raster.LoadArgb32Pixels(rect));
+            //         }
+            //     }
+            // }
+            // catch (Exception ex)
+            // {
+            //     Console.WriteLine($"Aspose.PSD 读取 TIFF 失败，转入备用路径: {ex.Message}");
+            // }
 
-            try
-            {
-                using (var image = new MagickImage(tifPath))
-                {
-                    image.Alpha(AlphaOption.On);
-                    using (var transparentPng = image.Clone())
-                    {
-                        transparentPng.Format = MagickFormat.Png32;
-                        using (var ms = new MemoryStream())
-                        {
-                            transparentPng.Write(ms);
-                            ms.Position = 0;
-                            using (var pngBitmap = new Bitmap(ms))
-                            using (var bitmap = new Bitmap(pngBitmap))
-                            {
-                                return ExtractPixelData(bitmap);
-                            }
-                        }
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"Magick.NET 读取 TIFF 失败，转入 LibTiff 备用路径: {ex.Message}");
-            }
+            // try
+            // {
+            //     using (var image = new MagickImage(tifPath))
+            //     {
+            //         image.Alpha(AlphaOption.On);
+            //         using (var transparentPng = image.Clone())
+            //         {
+            //             transparentPng.Format = MagickFormat.Png32;
+            //             using (var ms = new MemoryStream())
+            //             {
+            //                 transparentPng.Write(ms);
+            //                 ms.Position = 0;
+            //                 using (var pngBitmap = new Bitmap(ms))
+            //                 using (var bitmap = new Bitmap(pngBitmap))
+            //                 {
+            //                     return ExtractPixelData(bitmap);
+            //                 }
+            //             }
+            //         }
+            //     }
+            // }
+            // catch (Exception ex)
+            // {
+            //     Console.WriteLine($"Magick.NET 读取 TIFF 失败，转入 LibTiff 备用路径: {ex.Message}");
+            // }
 
             using (var bitmap = LoadTiffToBitmap(tifPath))
             {

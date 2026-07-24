@@ -38,7 +38,8 @@ namespace WindowsFormsApp1
 
         private Button addChannels;
 
-        private CheckBox chkBatchMode;
+        private RadioButton chkBatchMode;
+        private RadioButton rdoIndependentMode;
         private CheckBox chkDoubleSided;
         private Button btnMerge;
         private Button btnParseTiffLayers;
@@ -47,12 +48,22 @@ namespace WindowsFormsApp1
         private Button btnBrowseTemplate;
         private Button btnBrowseMaterial;
         private Button btnBrowseSave;
+        private Label lblTemplate;
+        private Label lblMaterial;
         private Panel pnlBatch;
         private ProgressBar prgBatch;
         private Label lblBatchSummary;
         private ListView lvResults;
         private Button btnPauseResume;
         private Button btnCancel;
+        private string independentTemplatePath;
+        private readonly List<string> independentMaterialFiles = new List<string>();
+        private string batchTemplateFolderPath;
+        private string batchMaterialFolderPath;
+        private bool isSwitchingInputMode;
+
+        private bool IsIndependentMode => rdoIndependentMode != null && rdoIndependentMode.Checked;
+        private bool IsTaskListMode => chkBatchMode != null && chkBatchMode.Checked || IsIndependentMode;
 
         private Panel channelListPanel;
         private Label channelSectionLabel;
@@ -162,6 +173,9 @@ namespace WindowsFormsApp1
             }
             Console.WriteLine($"{request},request");
             // 文件路径以及选项接收赋值
+
+            // WS 请求始终走既有目录匹配流程，不继承本地上一次的独立模式状态。
+            rdoIndependentMode.Checked = false;
 
             txtTemplateFolder.Text = request.TemplateFolder ?? string.Empty;
             txtMaterialFolder.Text = request.MaterialFolder ?? string.Empty;
@@ -613,16 +627,18 @@ namespace WindowsFormsApp1
             int textBoxWidth = 520;
             int btnWidth = 60;
 
-            var lblTemplate = CreateLabel("模版:", startX, startY, labelWidth);
+            lblTemplate = CreateLabel("模版目录:", startX, startY, labelWidth);
             txtTemplateFolder = CreateTextBox(startX + labelWidth + 5, startY, textBoxWidth);
+            txtTemplateFolder.TextChanged += (s, e) => SaveBatchInputState();
             btnBrowseTemplate = CreateButton("浏览", startX + labelWidth + textBoxWidth + 10, startY, btnWidth);
-            btnBrowseTemplate.Click += (s, e) => BrowseFolder(txtTemplateFolder);
+            btnBrowseTemplate.Click += (s, e) => BrowseTemplateInput();
 
             startY += rowHeight;
-            var lblMaterial = CreateLabel("素材:", startX, startY, labelWidth);
+            lblMaterial = CreateLabel("素材目录:", startX, startY, labelWidth);
             txtMaterialFolder = CreateTextBox(startX + labelWidth + 5, startY, textBoxWidth);
+            txtMaterialFolder.TextChanged += (s, e) => SaveBatchInputState();
             btnBrowseMaterial = CreateButton("浏览", startX + labelWidth + textBoxWidth + 10, startY, btnWidth);
-            btnBrowseMaterial.Click += (s, e) => BrowseFolder(txtMaterialFolder);
+            btnBrowseMaterial.Click += (s, e) => BrowseMaterialInput();
 
             startY += rowHeight;
             var lblSave = CreateLabel("保存:", startX, startY, labelWidth);
@@ -714,17 +730,37 @@ namespace WindowsFormsApp1
             //     Checked = true
             // };
 
-            chkBatchMode = new CheckBox
+            chkBatchMode = new RadioButton
             {
-                Text = "批量套图",
+                Text = "批量模式",
                 Location = new Point(startX + labelWidth + 210, startY + 8),
                 Size = new Size(90, 22),
                 ForeColor = Color.FromArgb(200, 205, 215),
                 BackColor = Color.Transparent,
                 FlatStyle = FlatStyle.Flat,
-                Checked = false
+                Checked = true
             };
             chkBatchMode.CheckedChanged += (s, e) => ToggleBatchModeLayout();
+
+            rdoIndependentMode = new RadioButton
+            {
+                Text = "独立模式",
+                Location = new Point(startX + labelWidth + 300, startY + 8),
+                Size = new Size(90, 22),
+                ForeColor = Color.FromArgb(200, 205, 215),
+                BackColor = Color.Transparent,
+                FlatStyle = FlatStyle.Flat
+            };
+            rdoIndependentMode.CheckedChanged += (s, e) =>
+            {
+                // 切入独立模式前保存目录模式路径，切回批量模式时可直接恢复。
+                if (rdoIndependentMode.Checked)
+                {
+                    SaveBatchInputState();
+                }
+
+                ToggleBatchModeLayout();
+            };
 
             chkDoubleSided = new CheckBox
             {
@@ -888,7 +924,7 @@ namespace WindowsFormsApp1
                 lblRotation, cmbRotation,
                 lblMirror, cmbMirror,
                 channelSectionLabel, addChannels, channelListPanel,
-                chkDoubleSided, chkBatchMode, lblStatus,
+                chkDoubleSided, chkBatchMode, rdoIndependentMode, lblStatus,
                 btnMerge, btnParseTiffLayers, btnClose,
                 pnlBatch
             });
@@ -1202,7 +1238,7 @@ namespace WindowsFormsApp1
 
         private void UpdateDialogLayout()
         {
-            if (channelSectionLabel == null || channelListPanel == null || chkBatchMode == null || chkDoubleSided == null || lblStatus == null || btnMerge == null || btnClose == null || pnlBatch == null)
+            if (channelSectionLabel == null || channelListPanel == null || chkBatchMode == null || rdoIndependentMode == null || chkDoubleSided == null || lblStatus == null || btnMerge == null || btnClose == null || pnlBatch == null)
             {
                 return;
             }
@@ -1210,14 +1246,15 @@ namespace WindowsFormsApp1
             int optionsTop = channelListPanel.Bottom + 8;
             chkDoubleSided.Location = new Point(195, optionsTop + 8);
             chkBatchMode.Location = new Point(310, optionsTop + 8);
-            lblStatus.Location = new Point(400, optionsTop + 8);
+            rdoIndependentMode.Location = new Point(400, optionsTop + 8);
+            lblStatus.Location = new Point(500, optionsTop + 8);
 
             int buttonTop = optionsTop + 50;
             btnMerge.Location = new Point(20, buttonTop);
             btnClose.Location = new Point(160, buttonTop);
             pnlBatch.Location = new Point(20, buttonTop + 55);
 
-            if (chkBatchMode.Checked)
+            if (IsTaskListMode)
             {
                 int availableBatchHeight = BatchDialogHeight - (pnlBatch.Top + BatchDialogBottomPadding);
                 pnlBatch.Height = Math.Max(BatchPanelMinHeight, availableBatchHeight);
@@ -1346,22 +1383,137 @@ namespace WindowsFormsApp1
 
         private void ToggleBatchModeLayout()
         {
-            pnlBatch.Visible = chkBatchMode.Checked;
-            this.Size = new Size(DialogWidth, chkBatchMode.Checked ? BatchDialogHeight : SingleDialogHeight);
-            btnMerge.Text = isRunning ? "处理中..." : (chkBatchMode.Checked ? "开始批量套图" : "开始套图");
+            bool showTaskList = IsTaskListMode;
 
-            if (chkBatchMode.Checked)
+            if (IsIndependentMode)
+            {
+                lblTemplate.Text = "模版文件:";
+                lblMaterial.Text = "素材文件:";
+                chkDoubleSided.Checked = false;
+                chkDoubleSided.Enabled = false;
+                SetModeInputDisplay(
+                    independentTemplatePath ?? string.Empty,
+                    independentMaterialFiles.Count == 0 ? string.Empty : $"已选择 {independentMaterialFiles.Count} 个素材文件");
+            }
+            else
+            {
+                lblTemplate.Text = "模版目录:";
+                lblMaterial.Text = "素材目录:";
+                chkDoubleSided.Enabled = !isRunning;
+                // 即使批量目录为空，也必须清除独立模式遗留的文件展示文本。
+                SetModeInputDisplay(batchTemplateFolderPath ?? string.Empty, batchMaterialFolderPath ?? string.Empty);
+            }
+
+            pnlBatch.Visible = showTaskList;
+            this.Size = new Size(DialogWidth, showTaskList ? BatchDialogHeight : SingleDialogHeight);
+            btnMerge.Text = isRunning
+                ? "处理中..."
+                : IsIndependentMode ? "开始独立套图" : (chkBatchMode.Checked ? "开始批量套图" : "开始套图");
+
+            if (showTaskList)
             {
                 RearrangeChannels();
             }
 
-            if (!chkBatchMode.Checked && !isRunning)
+            if (!showTaskList && !isRunning)
             {
                 lvResults.Items.Clear();
                 prgBatch.Maximum = 1;
                 prgBatch.Value = 0;
                 lblBatchSummary.Text = "等待批量任务";
             }
+        }
+
+        /// <summary>
+        /// 保存批量模式的目录输入。独立模式下文本框只用于展示文件选择结果，
+        /// 不会覆盖批量模式的目录状态。
+        /// </summary>
+        private void SaveBatchInputState()
+        {
+            if (isSwitchingInputMode || !chkBatchMode.Checked || txtTemplateFolder == null || txtMaterialFolder == null)
+                return;
+
+            batchTemplateFolderPath = txtTemplateFolder.Text;
+            batchMaterialFolderPath = txtMaterialFolder.Text;
+        }
+
+        /// <summary>
+        /// 切换模式时统一更新两个输入框，避免展示文本被误写入另一种模式的状态。
+        /// </summary>
+        private void SetModeInputDisplay(string templateText, string materialText)
+        {
+            isSwitchingInputMode = true;
+            try
+            {
+                txtTemplateFolder.Text = templateText;
+                txtMaterialFolder.Text = materialText;
+            }
+            finally
+            {
+                isSwitchingInputMode = false;
+            }
+        }
+
+        /// <summary>
+        /// 根据当前模式选择模板来源：批量模式选择目录，独立模式选择单个模板文件。
+        /// </summary>
+        private void BrowseTemplateInput()
+        {
+            if (!IsIndependentMode)
+            {
+                BrowseFolder(txtTemplateFolder);
+                return;
+            }
+
+            using (OpenFileDialog dialog = CreateImageFileDialog(false, "选择模版文件"))
+            {
+                if (dialog.ShowDialog() != DialogResult.OK)
+                    return;
+
+                independentTemplatePath = dialog.FileName;
+                txtTemplateFolder.Text = independentTemplatePath;
+                lblStatus.Text = $"已选择模版: {Path.GetFileName(independentTemplatePath)}";
+            }
+        }
+
+        /// <summary>
+        /// 根据当前模式选择素材来源：批量模式选择目录，独立模式支持一次多选素材文件。
+        /// </summary>
+        private void BrowseMaterialInput()
+        {
+            if (!IsIndependentMode)
+            {
+                BrowseFolder(txtMaterialFolder);
+                return;
+            }
+
+            using (OpenFileDialog dialog = CreateImageFileDialog(true, "选择一个或多个素材文件"))
+            {
+                if (dialog.ShowDialog() != DialogResult.OK)
+                    return;
+
+                independentMaterialFiles.Clear();
+                independentMaterialFiles.AddRange(dialog.FileNames
+                    .Where(File.Exists)
+                    .Distinct(StringComparer.OrdinalIgnoreCase));
+                txtMaterialFolder.Text = $"已选择 {independentMaterialFiles.Count} 个素材文件";
+                lblStatus.Text = $"已选择 {independentMaterialFiles.Count} 个素材";
+            }
+        }
+
+        /// <summary>
+        /// 创建独立模式使用的图片文件选择器。
+        /// </summary>
+        private OpenFileDialog CreateImageFileDialog(bool multiSelect, string title)
+        {
+            return new OpenFileDialog
+            {
+                Title = title,
+                Multiselect = multiSelect,
+                Filter = "支持的图片|*.psd;*.psb;*.tif;*.tiff;*.jpg;*.jpeg;*.png;*.bmp|所有文件|*.*",
+                CheckFileExists = true,
+                RestoreDirectory = true
+            };
         }
 
         private void BrowseFolder(TextBox textBox)
@@ -1470,6 +1622,11 @@ namespace WindowsFormsApp1
         // 本地操作
         private BuildJobsResult BuildJobs()
         {
+            if (IsIndependentMode)
+            {
+                return BuildIndependentJobs();
+            }
+
             if (!ValidateSelectedFolders())
             {
                 return null;
@@ -1516,6 +1673,46 @@ namespace WindowsFormsApp1
             }
 
             return BuildJobsCore(templateFile, materialFiles, isBatchMode, format,rotation,mirror);
+        }
+
+        /// <summary>
+        /// 构建独立模式任务。一个手动选定的模板可对应多个手动选定的素材，
+        /// 后续预检、任务表和实际合成均复用批量任务流程。
+        /// </summary>
+        private BuildJobsResult BuildIndependentJobs()
+        {
+            if (string.IsNullOrWhiteSpace(independentTemplatePath) || !File.Exists(independentTemplatePath))
+            {
+                ShowStatusMessage("未选择模版", "独立模式请先选择一个有效的模版文件。", "提示", MessageBoxIcon.Warning);
+                return null;
+            }
+
+            List<string> materialFiles = independentMaterialFiles
+                .Where(File.Exists)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            if (materialFiles.Count == 0)
+            {
+                ShowStatusMessage("未选择素材", "独立模式请至少选择一个有效的素材文件。", "提示", MessageBoxIcon.Warning);
+                return null;
+            }
+
+            if (string.IsNullOrWhiteSpace(txtSavePath.Text) || !Directory.Exists(txtSavePath.Text))
+            {
+                ShowStatusMessage("保存路径无效", "请选择有效的保存文件夹。", "提示", MessageBoxIcon.Warning);
+                return null;
+            }
+
+            string format = cmbFormat.SelectedItem?.ToString() ?? "TIF";
+            if (string.Equals(format, "PSD", StringComparison.OrdinalIgnoreCase))
+            {
+                ShowStatusMessage("PSD 导出不支持", "当前版本暂不支持真实 PSD 导出，请改用 TIF、PNG 或 JPEG。", "提示", MessageBoxIcon.Warning);
+                return null;
+            }
+
+            string rotation = cmbRotation.SelectedItem?.ToString() ?? "0°";
+            string mirror = cmbMirror.SelectedItem?.ToString() ?? "无";
+            return BuildJobsCore(independentTemplatePath, materialFiles, true, format, rotation, mirror);
         }
 
         //重置对话框初始值
@@ -1624,14 +1821,15 @@ namespace WindowsFormsApp1
             // chkWhiteInk.Enabled = !busy;
             // chkVarnish.Enabled = !busy;
             chkBatchMode.Enabled = !busy;
+            rdoIndependentMode.Enabled = !busy;
             chkDoubleSided.Enabled = !busy;
             btnBrowseTemplate.Enabled = !busy;
             btnBrowseMaterial.Enabled = !busy;
             btnBrowseSave.Enabled = !busy;
             btnClose.Enabled = !busy;
             btnMerge.Enabled = !busy;
-            btnPauseResume.Enabled = busy && chkBatchMode.Checked;
-            btnCancel.Enabled = busy && chkBatchMode.Checked;
+            btnPauseResume.Enabled = busy && IsTaskListMode;
+            btnCancel.Enabled = busy && IsTaskListMode;
             cmbRotation.Enabled = !busy;
             cmbMirror.Enabled = !busy;
             addChannels.Enabled = !busy;
@@ -1644,7 +1842,7 @@ namespace WindowsFormsApp1
             }
             else
             {
-                btnMerge.Text = chkBatchMode.Checked ? "开始批量套图" : "开始套图";
+                btnMerge.Text = IsIndependentMode ? "开始独立套图" : (chkBatchMode.Checked ? "开始批量套图" : "开始套图");
             }
         }
 
@@ -1709,7 +1907,7 @@ namespace WindowsFormsApp1
             InvokeOnUi(() =>
             {
                 lblStatus.Text = message;
-                if (chkBatchMode.Checked && job != null)
+                if (IsTaskListMode && job != null)
                 {
                     UpdateJobStatus(job, MergeJobStatus.Running, message);
                     UpdateBatchSummary();
@@ -1957,7 +2155,7 @@ namespace WindowsFormsApp1
                 }
             }
 
-            if (chkBatchMode.Checked)
+            if (IsTaskListMode)
             {
                 UpdateBatchSummary();
             }
