@@ -12,6 +12,75 @@ namespace WindowsFormsApp1
     internal static class OpenCvMergeRenderer
     {
         /// <summary>
+        /// 使用 OpenCV 读取普通 8 位 BGR/BGRA 图像，并转换为项目统一使用的 ARGB 整数像素。
+        /// CMYK、专色和分层 TIFF 由调用方继续走 LibTiff/Aspose 兼容链路。
+        /// </summary>
+        public static bool TryReadArgbPixels(string imagePath, out int width, out int height, out int[] pixels)
+        {
+            width = 0;
+            height = 0;
+            pixels = null;
+
+            try
+            {
+                using (var source = Cv2.ImRead(imagePath, ImreadModes.Unchanged))
+                {
+                    if (source.Empty() || source.Depth() != MatType.CV_8U ||
+                        (source.Channels() != 1 && source.Channels() != 3 && source.Channels() != 4))
+                        return false;
+
+                    width = source.Cols;
+                    height = source.Rows;
+                    int channelCount = source.Channels();
+                    int rowByteCount = checked(width * channelCount);
+                    var sourceBytes = new byte[checked(rowByteCount * height)];
+
+                    for (int row = 0; row < height; row++)
+                    {
+                        IntPtr rowAddress = IntPtr.Add(source.Data, checked((int)(row * source.Step())));
+                        Marshal.Copy(rowAddress, sourceBytes, row * rowByteCount, rowByteCount);
+                    }
+
+                    pixels = new int[checked(width * height)];
+                    int sourceOffset = 0;
+                    for (int index = 0; index < pixels.Length; index++)
+                    {
+                        byte blue;
+                        byte green;
+                        byte red;
+                        byte alpha = byte.MaxValue;
+                        if (channelCount == 1)
+                        {
+                            blue = sourceBytes[sourceOffset++];
+                            green = blue;
+                            red = blue;
+                        }
+                        else
+                        {
+                            blue = sourceBytes[sourceOffset++];
+                            green = sourceBytes[sourceOffset++];
+                            red = sourceBytes[sourceOffset++];
+                            if (channelCount == 4)
+                                alpha = sourceBytes[sourceOffset++];
+                        }
+
+                        pixels[index] = (alpha << 24) | (red << 16) | (green << 8) | blue;
+                    }
+
+                    return true;
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"OpenCV 读取图像失败，改用兼容读取链路: {ex.Message}");
+                width = 0;
+                height = 0;
+                pixels = null;
+                return false;
+            }
+        }
+
+        /// <summary>
         /// 将 ARGB 像素数组指定区域缩放为目标尺寸。
         /// 使用最近邻插值，保持原满版流程按像素取样的边缘和透明度极性。
         /// </summary>

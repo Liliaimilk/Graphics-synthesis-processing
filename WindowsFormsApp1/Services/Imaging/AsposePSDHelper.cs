@@ -558,6 +558,13 @@ namespace WindowsFormsApp1
         /// </summary>
         private static ImagePixelData LoadImagePixelData(string imagePath)
         {
+            if (CanUseOpenCvImageReader(imagePath) &&
+                OpenCvMergeRenderer.TryReadArgbPixels(imagePath, out int openCvWidth, out int openCvHeight, out int[] openCvPixels))
+            {
+                Console.WriteLine($"OpenCV 已读取素材像素: {Path.GetFileName(imagePath)} ({openCvWidth}x{openCvHeight})");
+                return new ImagePixelData(openCvWidth, openCvHeight, openCvPixels);
+            }
+
             var ext = Path.GetExtension(imagePath).ToLowerInvariant();
             if (ext == ".tif" || ext == ".tiff")
             {
@@ -581,6 +588,43 @@ namespace WindowsFormsApp1
                 {
                     bitmap.Dispose();
                 }
+            }
+        }
+
+        /// <summary>
+        /// 允许 OpenCV 读取普通 8 位 RGB、灰度和调色板 TIFF；CMYK、额外通道、分层 TIFF
+        /// 均保留原 LibTiff/Aspose 读取流程，以避免颜色、透明度或专色数据被误解码。
+        /// </summary>
+        private static bool CanUseOpenCvImageReader(string imagePath)
+        {
+            string ext = Path.GetExtension(imagePath).ToLowerInvariant();
+            if (ext != ".tif" && ext != ".tiff")
+                return true;
+
+            try
+            {
+                using (var tif = Tiff.Open(imagePath, "r"))
+                {
+                    if (tif == null)
+                        return false;
+
+                    FieldValue[] bitsField = tif.GetField(TiffTag.BITSPERSAMPLE);
+                    FieldValue[] photometricField = tif.GetField(TiffTag.PHOTOMETRIC);
+                    if (bitsField == null || photometricField == null)
+                        return false;
+
+                    int photometric = photometricField[0].ToInt();
+                    return bitsField[0].ToInt() == 8 &&
+                        (photometric == (int)Photometric.RGB ||
+                         photometric == (int)Photometric.MINISBLACK ||
+                         photometric == (int)Photometric.MINISWHITE ||
+                         photometric == (int)Photometric.PALETTE);
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"无法确认 TIFF 是否适用 OpenCV，改用兼容读取链路: {ex.Message}");
+                return false;
             }
         }
 
