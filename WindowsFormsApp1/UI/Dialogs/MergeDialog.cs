@@ -837,6 +837,7 @@ namespace WindowsFormsApp1
                 Visible = false,
                 Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Bottom
             };
+            pnlBatch.Paint += PnlBatch_Paint;
 
             prgBatch = new ProgressBar
             {
@@ -865,12 +866,14 @@ namespace WindowsFormsApp1
                 Size = new Size(pnlBatch.Width - 24, 290),
                 View = View.Details,
                 FullRowSelect = true,
-                GridLines = true,
+                GridLines = false,
+                OwnerDraw = true,
                 MultiSelect = false,
                 HideSelection = false,
                 BackColor = Color.FromArgb(40, 50, 70),
                 ForeColor = Color.FromArgb(220, 225, 235),
-                BorderStyle = BorderStyle.FixedSingle,
+                // 使用面板自绘半透明灰边框，避免系统固定边框颜色过亮。
+                BorderStyle = BorderStyle.None,
                 Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right
             };
             lvResults.Columns.Add("序号", 45);
@@ -879,6 +882,11 @@ namespace WindowsFormsApp1
             lvResults.Columns.Add("状态", 70);
             lvResults.Columns.Add("输出文件", 175);
             lvResults.Columns.Add("消息", 150);
+            lvResults.DrawColumnHeader += LvResults_DrawColumnHeader;
+            lvResults.DrawItem += LvResults_DrawItem;
+            lvResults.DrawSubItem += LvResults_DrawSubItem;
+            lvResults.SizeChanged += (s, e) => FitTaskTableLastColumn();
+            FitTaskTableLastColumn();
 
             btnPauseResume = new Button
             {
@@ -887,13 +895,15 @@ namespace WindowsFormsApp1
                 Size = new Size(80, 28),
                 Font = new Font("微软雅黑", 9F),
                 BackColor = Color.FromArgb(45, 60, 85),
-                ForeColor = Color.FromArgb(220, 225, 235),
+                ForeColor = Color.White,
                 FlatStyle = FlatStyle.Flat,
+                UseVisualStyleBackColor = false,
                 Cursor = Cursors.Hand,
                 Anchor = AnchorStyles.Right | AnchorStyles.Bottom,
                 Enabled = false
             };
             btnPauseResume.Click += BtnPauseResume_Click;
+            btnPauseResume.Paint += DrawBatchActionButtonText;
 
             btnCancel = new Button
             {
@@ -902,13 +912,15 @@ namespace WindowsFormsApp1
                 Size = new Size(80, 28),
                 Font = new Font("微软雅黑", 9F),
                 BackColor = Color.FromArgb(115, 55, 55),
-                ForeColor = Color.FromArgb(220, 225, 235),
+                ForeColor = Color.White,
                 FlatStyle = FlatStyle.Flat,
+                UseVisualStyleBackColor = false,
                 Cursor = Cursors.Hand,
                 Anchor = AnchorStyles.Right | AnchorStyles.Bottom,
                 Enabled = false
             };
             btnCancel.Click += BtnCancel_Click;
+            btnCancel.Paint += DrawBatchActionButtonText;
 
             pnlBatch.Controls.Add(prgBatch);
             pnlBatch.Controls.Add(lblBatchSummary);
@@ -932,6 +944,111 @@ namespace WindowsFormsApp1
 
             RearrangeChannels();
             ToggleBatchModeLayout();
+        }
+
+        /// <summary>
+        /// 绘制任务列表的低对比半透明灰色边框，保持深色界面的层次感。
+        /// </summary>
+        private void PnlBatch_Paint(object sender, PaintEventArgs e)
+        {
+            if (lvResults == null)
+                return;
+
+            Rectangle borderBounds = new Rectangle(
+                lvResults.Left - 1,
+                lvResults.Top - 1,
+                lvResults.Width + 1,
+                lvResults.Height + 1);
+            using (var pen = new Pen(Color.FromArgb(0x64, 0x64, 0x64)))
+            {
+                e.Graphics.DrawRectangle(pen, borderBounds);
+            }
+        }
+
+        /// <summary>
+        /// 让“消息”列占满任务表余下宽度，避免表格最右侧出现空白区域。
+        /// </summary>
+        private void FitTaskTableLastColumn()
+        {
+            if (lvResults == null || lvResults.Columns.Count == 0)
+                return;
+
+            int usedWidth = 0;
+            for (int index = 0; index < lvResults.Columns.Count - 1; index++)
+            {
+                usedWidth += lvResults.Columns[index].Width;
+            }
+
+            lvResults.Columns[lvResults.Columns.Count - 1].Width = Math.Max(80, lvResults.ClientSize.Width - usedWidth - 2);
+        }
+
+        /// <summary>
+        /// 自绘任务表头，使表头分隔线与表格网格线统一为 #646464。
+        /// </summary>
+        private void LvResults_DrawColumnHeader(object sender, DrawListViewColumnHeaderEventArgs e)
+        {
+            using (var backgroundBrush = new SolidBrush(Color.FromArgb(48, 58, 78)))
+            using (var borderPen = new Pen(Color.FromArgb(0x64, 0x64, 0x64)))
+            {
+                e.Graphics.FillRectangle(backgroundBrush, e.Bounds);
+                TextRenderer.DrawText(
+                    e.Graphics,
+                    e.Header.Text,
+                    lvResults.Font,
+                    Rectangle.Inflate(e.Bounds, -6, 0),
+                    lvResults.ForeColor,
+                    TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+                e.Graphics.DrawRectangle(borderPen, e.Bounds.X, e.Bounds.Y, e.Bounds.Width - 1, e.Bounds.Height - 1);
+            }
+        }
+
+        /// <summary>
+        /// Details 视图由子项统一绘制，避免系统默认网格线使用白色。
+        /// </summary>
+        private void LvResults_DrawItem(object sender, DrawListViewItemEventArgs e)
+        {
+        }
+
+        /// <summary>
+        /// 自绘每个任务单元格，并使用 #646464 分隔线保留表格结构。
+        /// </summary>
+        private void LvResults_DrawSubItem(object sender, DrawListViewSubItemEventArgs e)
+        {
+            bool selected = e.Item.Selected;
+            Color backgroundColor = selected ? Color.FromArgb(60, 95, 135) : lvResults.BackColor;
+            Color textColor = selected ? Color.White : lvResults.ForeColor;
+
+            using (var backgroundBrush = new SolidBrush(backgroundColor))
+            using (var borderPen = new Pen(Color.FromArgb(0x64, 0x64, 0x64)))
+            {
+                e.Graphics.FillRectangle(backgroundBrush, e.Bounds);
+                TextRenderer.DrawText(
+                    e.Graphics,
+                    e.SubItem.Text,
+                    lvResults.Font,
+                    Rectangle.Inflate(e.Bounds, -6, 0),
+                    textColor,
+                    TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
+                e.Graphics.DrawRectangle(borderPen, e.Bounds.X, e.Bounds.Y, e.Bounds.Width - 1, e.Bounds.Height - 1);
+            }
+        }
+
+        /// <summary>
+        /// 标准 Button 在禁用状态会忽略 ForeColor；在默认绘制完成后补绘纯白文字。
+        /// </summary>
+        private void DrawBatchActionButtonText(object sender, PaintEventArgs e)
+        {
+            var button = sender as Button;
+            if (button == null)
+                return;
+
+            TextRenderer.DrawText(
+                e.Graphics,
+                button.Text,
+                button.Font,
+                button.ClientRectangle,
+                Color.White,
+                TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine);
         }
 
         /// <summary>
