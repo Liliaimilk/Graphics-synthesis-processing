@@ -45,12 +45,12 @@ namespace WindowsFormsApp1
                 remoteWebSocketCts?.Dispose();
                 remoteWebSocketCts = new CancellationTokenSource();
                 remoteWebSocketReceiveTask = Task.Run(() => RunRemoteWebSocketClientLoopCoreAsync(remoteWebSocketCts.Token));
-                lblStatus.Text = "正在连接远程 WebSocket...";
+                lblStatus.Text = "正在连接远程...";
             }
             catch (Exception ex)
             {
-                lblStatus.Text = "WebSocket 启动失败";
-                MessageBox.Show($"无法启动 WebSocket 客户端: {ex.Message}", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                lblStatus.Text = "服务启动失败";
+                MessageBox.Show($"无法启动 WS 客户端: {ex.Message}", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 StopRemoteWebSocketServerCore();
             }
 
@@ -105,9 +105,9 @@ namespace WindowsFormsApp1
                     client = new ClientWebSocket();
                     remoteWebSocketClient = client;
 
-                    UpdateStatusSafely($"正在连接: {RemoteWebSocketEndpoint}");
+                    UpdateStatusSafely($"正在连接");// : {RemoteWebSocketEndpoint}
                     await client.ConnectAsync(new Uri(RemoteWebSocketEndpoint), cancellationToken);
-                    UpdateStatusSafely("远程 WebSocket 已连接");
+                    UpdateStatusSafely("远程已连接");
 
                     await ReceiveRemoteMessagesCoreAsync(client, cancellationToken);
                 }
@@ -117,11 +117,11 @@ namespace WindowsFormsApp1
                 }
                 catch (WebSocketException ex)
                 {
-                    UpdateStatusSafely($"WebSocket 连接失败，稍后重试: {ex.Message}");
+                    UpdateStatusSafely($"连接失败，稍后重试: {ex.Message}");
                 }
                 catch (Exception ex)
                 {
-                    UpdateStatusSafely($"WebSocket 运行异常，稍后重试: {ex.Message}");
+                    UpdateStatusSafely($"运行异常，稍后重试: {ex.Message}");
                 }
                 finally
                 {
