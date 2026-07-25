@@ -47,6 +47,7 @@ namespace WindowsFormsApp1
         private Button btnRun;
 
         private Button loadTiffButton;
+        private Button btnClearLoadedImages;
         private Button btnClose;
         private Label lblStatus;
         private Panel previewHost;
@@ -288,11 +289,27 @@ namespace WindowsFormsApp1
             loadTiffButton.Click+= (s, e) => LoadTiffButton_Click(s, e);
             leftPanel.Controls.Add(loadTiffButton);
 
+            btnClearLoadedImages = new Button
+            {
+                Text = "清空已载入",
+                Location = new Point(startX + 125, startY),
+                Size = new Size(100, 32),
+                Font = new Font("Microsoft YaHei", 9F),
+                BackColor = Color.FromArgb(75, 80, 95),
+                ForeColor = Color.FromArgb(220, 225, 235),
+                FlatStyle = FlatStyle.Flat,
+                Cursor = Cursors.Hand
+            };
+            btnClearLoadedImages.Click += (s, e) => ClearLoadedImages();
+            leftPanel.Controls.Add(btnClearLoadedImages);
+            leftPanel.Controls.Add(CreateLabel("扫码文件名", startX + 235, startY + 3, 85));
+
             leftPanel.Controls.Add(CreateLabel("扫码文件名:", startX + 130, startY + 3, 85));
-            txtScanInput = CreateTextBox(startX + 220, startY, 180);
+            txtScanInput = CreateTextBox(startX + 325, startY, 180);
             txtScanInput.KeyDown += TxtScanInput_KeyDown;
             txtScanInput.Enter += (s, e) => txtScanInput.SelectAll();
             leftPanel.Controls.Add(txtScanInput);
+            btnClearLoadedImages.BringToFront();
 
 
             // Status label
@@ -385,6 +402,18 @@ namespace WindowsFormsApp1
             currentImageFiles.Clear();
         }
 
+        // 清空手动载入和扫码载入的素材，并同步重绘空格位预览。
+        private void ClearLoadedImages()
+        {
+            if (isRunning)
+                return;
+
+            ClearThumbnailCache();
+            RefreshPreview();
+            lblStatus.Text = "已清空载入素材";
+            FocusScanInput();
+        }
+
         private void MarkPreviewDirty()
         {
             // Optional: could disable auto-refresh for now
@@ -405,16 +434,13 @@ namespace WindowsFormsApp1
                 txtScanInput.SelectionLength = 0;
             }));
         }
-        // 向一个图片文件列表添加文件时去重以及校验
-        private bool AppendImageFileIfMissing(string path)
+        // 向图片文件列表追加文件；同一 TIFF 可重复占用多个格位。
+        private bool AppendImageFile(string path)
         {
             if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
                 return false;
 
             string fullPath = Path.GetFullPath(path);
-            if (currentImageFiles.Any(existing => string.Equals(Path.GetFullPath(existing), fullPath, StringComparison.OrdinalIgnoreCase)))
-                return false;
-
             currentImageFiles.Add(fullPath);
             return true;
         }
@@ -552,7 +578,7 @@ namespace WindowsFormsApp1
                 return;
             }
 
-            if (AppendImageFileIfMissing(matchedPath))
+            if (AppendImageFile(matchedPath))
             {
                 lblStatus.Text = $"已载入: {Path.GetFileName(matchedPath)}";
                 txtScanInput.Clear();
@@ -561,7 +587,7 @@ namespace WindowsFormsApp1
                 return;
             }
 
-            lblStatus.Text = $"已存在，已忽略: {Path.GetFileName(matchedPath)}";
+            lblStatus.Text = $"载入失败: {Path.GetFileName(matchedPath)}";
             txtScanInput.Clear();
             FocusScanInput();
         }
@@ -596,7 +622,8 @@ namespace WindowsFormsApp1
                 bool changed = false;
                 foreach (string selectedFile in selectedFiles)
                 {
-                    changed |= AppendImageFileIfMissing(selectedFile);
+                    // 同一 TIFF 可被多次载入，排版时会依次填入不同格位。
+                    changed |= AppendImageFile(selectedFile);
                 }
 
                 if (changed)
@@ -660,25 +687,11 @@ namespace WindowsFormsApp1
                     return;
                 }
 
-                // 排版按格子顺序填充；素材少于格子时保留空位，素材超出容量时仅显示前面的可排入素材。
-                if (currentImageFiles != null && currentImageFiles.Count > prepared.Capacity)
-                    currentImageFiles = currentImageFiles.Take(prepared.Capacity).ToList();
-
-                // 更新预览信息和状态
-                if (mode == "all")
-                {
-                    UpdatePreviewSummary(prepared, currentImageFiles);
-                    RenderPreview(prepared, currentImageFiles);
-                }
-                else if (mode == "loaded")
-                {
-                    UpdatePreviewSummary(prepared, currentImageFiles);
-                    RenderPreview(prepared, currentImageFiles);
-                }
-                else
-                {
-                    RenderPreview(prepared);
-                }
+                // 刷新预览始终使用当前已载入的素材。渲染时会自然忽略超出格位容量的部分，
+                // 但不能截断 currentImageFiles，否则用户调整格子数量后会丢失已载入素材。
+                List<string> previewImageFiles = currentImageFiles ?? new List<string>();
+                UpdatePreviewSummary(prepared, previewImageFiles);
+                RenderPreview(prepared, previewImageFiles);
 
 
                 lblStatus.Text = "预览已刷新";
@@ -1214,6 +1227,7 @@ namespace WindowsFormsApp1
             btnClose.Enabled = !busy;
             btnPreviewAll.Enabled = !busy;
             loadTiffButton.Enabled = !busy;
+            btnClearLoadedImages.Enabled = !busy;
             if (txtScanInput != null)
                 txtScanInput.Enabled = !busy;
             btnRun.Text = busy ? "处理中..." : "开始排版输出";
