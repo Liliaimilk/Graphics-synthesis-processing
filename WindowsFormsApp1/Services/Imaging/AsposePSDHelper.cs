@@ -30,6 +30,9 @@ namespace WindowsFormsApp1
     public static class AsposePSDHelper
     {
         private const float OutputDpi = 300f;
+        // 性能测试开关：素材 TIFF 优先由 OpenCV 解码；失败后仍会回退 LibTiff/Aspose。
+        // 注意：OpenCV 会将部分 CMYK TIFF 当作 BGRA 处理，颜色验证通过前不应作为最终生产默认设置。
+        private const bool UseOpenCvForAllMaterialReads = true;
         private static readonly ConcurrentDictionary<string, CachedImagePixelData> ImagePixelCache = new ConcurrentDictionary<string, CachedImagePixelData>(StringComparer.OrdinalIgnoreCase);
 
         private sealed class ImagePixelData
@@ -84,11 +87,12 @@ namespace WindowsFormsApp1
             {
                 controlCheckpoint?.Invoke();
                 progressCallback?.Invoke("正在读取模板...");
-                var backgroundData = CloneImagePixelData(GetCachedImagePixelData(templateTifPath));
+                CachedImagePixelData cachedTemplate = GetCachedImagePixelData(templateTifPath);
+                var backgroundData = CloneImagePixelData(cachedTemplate.PixelData);
 
                 controlCheckpoint?.Invoke();
                 progressCallback?.Invoke("正在读取素材...");
-                var foregroundData = LoadImagePixelData(materialTifPath);
+                var foregroundData = LoadImagePixelData(materialTifPath, UseOpenCvForAllMaterialReads);
                 
                 // 读取mask图像数据，如果是满版模式且提供了遮罩路径，则读取遮罩图像
                 ImagePixelData exclusionMaskData = null;
@@ -96,15 +100,15 @@ namespace WindowsFormsApp1
                 {
                     controlCheckpoint?.Invoke();
                     progressCallback?.Invoke("正在读取摄像头遮罩...");
-                    exclusionMaskData = GetCachedImagePixelData(exclusionMaskPath);
+                    exclusionMaskData = GetCachedImagePixelData(exclusionMaskPath).PixelData;
                     Console.WriteLine($"摄像头遮罩路径: {exclusionMaskPath}");
                     Console.WriteLine($"摄像头遮罩尺寸: W={exclusionMaskData.Width}, H={exclusionMaskData.Height}");
                 }
 
                 // 先找出素材里真正有内容的非透明区域，后续贴图都以它为准。
-                var opaqueBounds = GetOpaqueBounds(foregroundData.Pixels, foregroundData.Width, foregroundData.Height);
-                int opaquePixels = CountOpaquePixels(foregroundData.Pixels);
-                Console.WriteLine($"素材非透明像素: {opaquePixels}");
+                OpaquePixelAnalysis materialAnalysis = AnalyzeOpaquePixels(foregroundData.Pixels, foregroundData.Width, foregroundData.Height);
+                var opaqueBounds = materialAnalysis.Bounds;
+                Console.WriteLine($"素材非透明像素: {materialAnalysis.Count}");
                 Console.WriteLine($"素材内容区域: X={opaqueBounds.X}, Y={opaqueBounds.Y}, W={opaqueBounds.Width}, H={opaqueBounds.Height}");
 
                 if (opaqueBounds == Rectangle.Empty)
@@ -130,7 +134,8 @@ namespace WindowsFormsApp1
                 // 满版模式按模板可用区域和素材有效区域做覆盖式合成。
                 if (compositeMode == TemplateCompositeMode.FullBleed)
                 {
-                    var templateBounds = GetOpaqueBounds(backgroundData.Pixels, backgroundData.Width, backgroundData.Height);
+                    // 模板像素会被当前任务修改，边界不会；直接复用缓存分析结果避免批量任务反复扫描整张模板。
+                    var templateBounds = cachedTemplate.GetOpaqueBounds();
                     Console.WriteLine($"模板手机壳区域: X={templateBounds.X}, Y={templateBounds.Y}, W={templateBounds.Width}, H={templateBounds.Height}");
                     if (templateBounds == Rectangle.Empty)
                         throw new InvalidOperationException("模板没有可用于满版模式的非透明手机壳区域");
@@ -517,7 +522,7 @@ namespace WindowsFormsApp1
         /// <summary>
         /// 获取缓存中的图像像素数据；如果源文件已变化则自动刷新缓存。
         /// </summary>
-        private static ImagePixelData GetCachedImagePixelData(string imagePath)
+        private static CachedImagePixelData GetCachedImagePixelData(string imagePath)
         {
             string cacheKey = Path.GetFullPath(imagePath);
             var fileInfo = new FileInfo(cacheKey);
@@ -537,7 +542,7 @@ namespace WindowsFormsApp1
                     return new CachedImagePixelData(fileInfo.Length, fileInfo.LastWriteTimeUtc, LoadImagePixelData(cacheKey));
                 });
 
-            return cached.PixelData;
+            return cached;
         }
 
         /// <summary>
@@ -556,11 +561,35 @@ namespace WindowsFormsApp1
         /// <summary>
         /// 按文件类型读取 ARGB 像素；TIFF 使用专用读取链路以优先恢复透明区域。
         /// </summary>
-        private static ImagePixelData LoadImagePixelData(string imagePath)
+        private static ImagePixelData LoadImagePixelData(string imagePath, bool forceOpenCvForTiff = false)
         {
-            if (CanUseOpenCvImageReader(imagePath) &&
-                OpenCvMergeRenderer.TryReadArgbPixels(imagePath, out int openCvWidth, out int openCvHeight, out int[] openCvPixels))
+            bool isForcedCmykMaterial = forceOpenCvForTiff && IsCmykTiff(imagePath);
+            byte[] cmykAlpha = null;
+            if (isForcedCmykMaterial)
             {
+                // Photoshop 导出的 CMYK 素材常为 C/M/Y/K/Alpha 五通道；OpenCV 不会稳定保留第 5 个 Alpha。
+                // 只用 LibTiff 顺序提取该通道，再与 OpenCV 的快速颜色读取结果合并。
+                TryReadCmykTiffAlphaChannel(imagePath, out cmykAlpha);
+            }
+
+            bool forceOpenCvFourChannelOpaque = isForcedCmykMaterial && cmykAlpha == null;
+            if ((forceOpenCvForTiff || CanUseOpenCvImageReader(imagePath)) &&
+                OpenCvMergeRenderer.TryReadArgbPixels(imagePath, forceOpenCvFourChannelOpaque, out int openCvWidth, out int openCvHeight, out int[] openCvPixels))
+            {
+                if (cmykAlpha != null && cmykAlpha.Length == openCvPixels.Length)
+                {
+                    ApplyAlphaChannel(openCvPixels, cmykAlpha);
+                }
+
+                // 与原 LibTiff 回退链路保持一致：整张素材都不透明时，将接近白色的画布留白视为透明。
+                // 否则满版缩放会把白色留边一并缩放，窄图就会在模板左右露出白边。
+                if (forceOpenCvForTiff &&
+                    (!isForcedCmykMaterial || cmykAlpha == null) &&
+                    HasOpaquePixelsOnAllCanvasEdges(openCvPixels, openCvWidth, openCvHeight))
+                {
+                    MakeNearWhitePixelsTransparent(openCvPixels);
+                }
+
                 Console.WriteLine($"OpenCV 已读取素材像素: {Path.GetFileName(imagePath)} ({openCvWidth}x{openCvHeight})");
                 return new ImagePixelData(openCvWidth, openCvHeight, openCvPixels);
             }
@@ -629,13 +658,187 @@ namespace WindowsFormsApp1
         }
 
         /// <summary>
+        /// 判断 TIFF 是否为 CMYK 分色图。全 OpenCV 素材测试模式下，
+        /// 需要忽略其不可靠的第四通道 Alpha，避免彩色区域被错误透明化。
+        /// </summary>
+        private static bool IsCmykTiff(string imagePath)
+        {
+            string ext = Path.GetExtension(imagePath).ToLowerInvariant();
+            if (ext != ".tif" && ext != ".tiff")
+                return false;
+
+            try
+            {
+                using (var tif = Tiff.Open(imagePath, "r"))
+                {
+                    FieldValue[] photometricField = tif?.GetField(TiffTag.PHOTOMETRIC);
+                    return photometricField != null && photometricField[0].ToInt() == (int)Photometric.SEPARATED;
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"检查 TIFF CMYK 标记失败，按普通 BGRA 读取: {ex.Message}");
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// 只提取连续存储 8 位 CMYK TIFF 的独立 Alpha 通道，不解码 C/M/Y/K 颜色。
+        /// 该轻量读取用于补齐 OpenCV 对五通道 TIFF 的透明度缺失。
+        /// </summary>
+        private static bool TryReadCmykTiffAlphaChannel(string imagePath, out byte[] alphaChannel)
+        {
+            alphaChannel = null;
+            try
+            {
+                using (var tif = Tiff.Open(imagePath, "r"))
+                {
+                    if (tif == null)
+                        return false;
+
+                    FieldValue[] widthField = tif.GetField(TiffTag.IMAGEWIDTH);
+                    FieldValue[] heightField = tif.GetField(TiffTag.IMAGELENGTH);
+                    FieldValue[] samplesField = tif.GetField(TiffTag.SAMPLESPERPIXEL);
+                    FieldValue[] bitsField = tif.GetField(TiffTag.BITSPERSAMPLE);
+                    FieldValue[] planarField = tif.GetField(TiffTag.PLANARCONFIG);
+                    if (widthField == null || heightField == null || samplesField == null || bitsField == null || planarField == null)
+                        return false;
+
+                    int width = widthField[0].ToInt();
+                    int height = heightField[0].ToInt();
+                    int samples = samplesField[0].ToInt();
+                    if (width <= 0 || height <= 0 || samples < 5 || bitsField[0].ToInt() != 8 ||
+                        planarField[0].ToInt() != (int)PlanarConfig.CONTIG)
+                        return false;
+
+                    alphaChannel = new byte[checked(width * height)];
+                    byte[] scanline = new byte[checked(width * samples)];
+                    for (int y = 0; y < height; y++)
+                    {
+                        tif.ReadScanline(scanline, y);
+                        int alphaOffset = y * width;
+                        for (int x = 0; x < width; x++)
+                        {
+                            int pixelOffset = x * samples;
+                            byte cyan = scanline[pixelOffset];
+                            byte magenta = scanline[pixelOffset + 1];
+                            byte yellow = scanline[pixelOffset + 2];
+                            byte black = scanline[pixelOffset + 3];
+                            byte alpha = scanline[pixelOffset + 4];
+
+                            // 旧链路会把 TIFF 转为 sRGB 后以 3% 容差抠掉白底。
+                            // 在原始 CMYK 墨量上做同等近白判断，可避免 OpenCV 的色彩解释差异影响边界。
+                            if (IsNearWhiteCmykPixel(cyan, magenta, yellow, black))
+                            {
+                                alpha = 0;
+                            }
+
+                            alphaChannel[alphaOffset + x] = alpha;
+                        }
+                    }
+
+                    return true;
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"读取 CMYK TIFF Alpha 通道失败，将使用不透明素材: {ex.Message}");
+                alphaChannel = null;
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// 将 LibTiff 提取的透明度写回 OpenCV 解码得到的 ARGB 像素。
+        /// </summary>
+        private static void ApplyAlphaChannel(int[] pixels, byte[] alphaChannel)
+        {
+            for (int index = 0; index < pixels.Length; index++)
+            {
+                pixels[index] = (pixels[index] & 0x00FFFFFF) | (alphaChannel[index] << 24);
+            }
+        }
+
+        /// <summary>
+        /// 基于原始 CMYK 墨量判断像素是否接近白色背景。
+        /// </summary>
+        private static bool IsNearWhiteCmykPixel(byte cyan, byte magenta, byte yellow, byte black)
+        {
+            byte red = ConvertCmykInkToRgb(cyan, black);
+            byte green = ConvertCmykInkToRgb(magenta, black);
+            byte blue = ConvertCmykInkToRgb(yellow, black);
+            int brightness = (red + green + blue) / 3;
+            int colorSpread = Math.Max(red, Math.Max(green, blue)) - Math.Min(red, Math.Min(green, blue));
+            return brightness >= 235 && colorSpread <= 20;
+        }
+
+        /// <summary>
+        /// 判断素材有效像素是否已触及画布四边。满足时与旧白底抠图分支的触发条件一致。
+        /// </summary>
+        private static bool HasOpaquePixelsOnAllCanvasEdges(int[] pixels, int width, int height)
+        {
+            if (pixels == null || width <= 0 || height <= 0 || pixels.Length < checked(width * height))
+                return false;
+
+            bool top = false;
+            bool bottom = false;
+            bool left = false;
+            bool right = false;
+            int bottomRow = (height - 1) * width;
+            for (int x = 0; x < width; x++)
+            {
+                top |= ((pixels[x] >> 24) & 0xFF) > 0;
+                bottom |= ((pixels[bottomRow + x] >> 24) & 0xFF) > 0;
+            }
+
+            for (int y = 0; y < height; y++)
+            {
+                int row = y * width;
+                left |= ((pixels[row] >> 24) & 0xFF) > 0;
+                right |= ((pixels[row + width - 1] >> 24) & 0xFF) > 0;
+            }
+
+            return top && bottom && left && right;
+        }
+
+        /// <summary>
+        /// 将接近白色的像素改为透明，复刻旧流程的 3% 白底抠图语义，
+        /// 但避免 Magick 转 PNG 再读回造成的额外解码开销。
+        /// </summary>
+        private static void MakeNearWhitePixelsTransparent(int[] pixels)
+        {
+            for (int index = 0; index < pixels.Length; index++)
+            {
+                int pixel = pixels[index];
+                if (((pixel >> 24) & 0xFF) == 0)
+                    continue;
+
+                byte red = (byte)((pixel >> 16) & 0xFF);
+                byte green = (byte)((pixel >> 8) & 0xFF);
+                byte blue = (byte)(pixel & 0xFF);
+                int brightness = (red + green + blue) / 3;
+                int colorSpread = Math.Max(red, Math.Max(green, blue)) - Math.Min(red, Math.Min(green, blue));
+                // 容忍 CMYK 转换后略偏暖或偏冷的白底；浅色图案通常色差更大，不会命中该条件。
+                if (brightness >= 235 && colorSpread <= 20)
+                {
+                    pixels[index] &= 0x00FFFFFF;
+                }
+            }
+        }
+
+        /// <summary>
         /// 读取 TIFF 像素并按图层、原始透明度、白底抠图三个层级尝试恢复可见区域。
         /// </summary>
         private static ImagePixelData LoadTiffPixelData(string tifPath)
         {
-            var layeredData = TryLoadTiffLayerPixelData(tifPath);
-            if (layeredData != null)
-                return layeredData;
+            // 仅在 TIFF 带有 Photoshop 图像资源标签时才尝试昂贵的图层重建。
+            // 双面模式不经过这里，其指定图层读取仍由 ProcessTiffLayerPair 负责。
+            if (HasPhotoshopImageSourceData(tifPath))
+            {
+                var layeredData = TryLoadTiffLayerPixelData(tifPath);
+                if (layeredData != null)
+                    return layeredData;
+            }
 
             var pixelData = TryLoadTiffRasterPixelData(tifPath);
             var opaqueBounds = GetOpaqueBounds(pixelData.Pixels, pixelData.Width, pixelData.Height);
@@ -650,6 +853,26 @@ namespace WindowsFormsApp1
             }
 
             return pixelData;
+        }
+
+        /// <summary>
+        /// 轻量检查 TIFF 是否包含 Photoshop 图像资源标签（37724），用于避免普通 TIFF
+        /// 无意义地进入 Aspose 图层解析。该标签存在不代表一定有图层，后续仍会安全回退。
+        /// </summary>
+        private static bool HasPhotoshopImageSourceData(string tifPath)
+        {
+            try
+            {
+                using (var tif = Tiff.Open(tifPath, "r"))
+                {
+                    return tif != null && tif.GetField((TiffTag)37724) != null;
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"检查 Photoshop TIFF 图层标签失败，跳过图层读取: {ex.Message}");
+                return false;
+            }
         }
 
         /// <summary>
@@ -1270,10 +1493,19 @@ namespace WindowsFormsApp1
         /// </summary>
         private static Rectangle GetOpaqueBounds(int[] argbPixels, int width, int height)
         {
+            return AnalyzeOpaquePixels(argbPixels, width, height).Bounds;
+        }
+
+        /// <summary>
+        /// 单次遍历同时计算非透明边界和数量，避免素材贴合前重复扫描整张像素数组。
+        /// </summary>
+        private static OpaquePixelAnalysis AnalyzeOpaquePixels(int[] argbPixels, int width, int height)
+        {
             int minX = width;
             int minY = height;
             int maxX = -1;
             int maxY = -1;
+            int count = 0;
 
             for (int y = 0; y < height; y++)
             {
@@ -1282,6 +1514,7 @@ namespace WindowsFormsApp1
                 {
                     if (((argbPixels[row + x] >> 24) & 0xFF) > 0)
                     {
+                        count++;
                         if (x < minX) minX = x;
                         if (y < minY) minY = y;
                         if (x > maxX) maxX = x;
@@ -1291,23 +1524,9 @@ namespace WindowsFormsApp1
             }
 
             if (maxX < minX || maxY < minY)
-                return Rectangle.Empty;
+                return new OpaquePixelAnalysis(Rectangle.Empty, 0);
 
-            return Rectangle.FromLTRB(minX, minY, maxX + 1, maxY + 1);
-        }
-
-        /// <summary>
-        /// 统计非透明像素数量，用于记录素材透明度读取是否正常。
-        /// </summary>
-        private static int CountOpaquePixels(int[] argbPixels)
-        {
-            int count = 0;
-            for (int i = 0; i < argbPixels.Length; i++)
-            {
-                if (((argbPixels[i] >> 24) & 0xFF) > 0)
-                    count++;
-            }
-            return count;
+            return new OpaquePixelAnalysis(Rectangle.FromLTRB(minX, minY, maxX + 1, maxY + 1), count);
         }
 
         /// <summary>
@@ -1516,12 +1735,37 @@ namespace WindowsFormsApp1
             public long FileLength { get; }
             public DateTime LastWriteTimeUtc { get; }
             public ImagePixelData PixelData { get; }
+            private readonly Lazy<Rectangle> opaqueBounds;
 
             public CachedImagePixelData(long fileLength, DateTime lastWriteTimeUtc, ImagePixelData pixelData)
             {
                 FileLength = fileLength;
                 LastWriteTimeUtc = lastWriteTimeUtc;
                 PixelData = pixelData ?? throw new ArgumentNullException(nameof(pixelData));
+                opaqueBounds = new Lazy<Rectangle>(() => AnalyzeOpaquePixels(PixelData.Pixels, PixelData.Width, PixelData.Height).Bounds, true);
+            }
+
+            /// <summary>
+            /// 延迟计算并缓存原始图像的非透明边界，模板与遮罩复用时无需重复扫描。
+            /// </summary>
+            public Rectangle GetOpaqueBounds()
+            {
+                return opaqueBounds.Value;
+            }
+        }
+
+        /// <summary>
+        /// 一次透明像素扫描得到的内容边界与像素数量。
+        /// </summary>
+        private readonly struct OpaquePixelAnalysis
+        {
+            public Rectangle Bounds { get; }
+            public int Count { get; }
+
+            public OpaquePixelAnalysis(Rectangle bounds, int count)
+            {
+                Bounds = bounds;
+                Count = count;
             }
         }
         // 辅助类

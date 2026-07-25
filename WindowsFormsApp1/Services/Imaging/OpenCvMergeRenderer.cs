@@ -15,7 +15,7 @@ namespace WindowsFormsApp1
         /// 使用 OpenCV 读取普通 8 位 BGR/BGRA 图像，并转换为项目统一使用的 ARGB 整数像素。
         /// CMYK、专色和分层 TIFF 由调用方继续走 LibTiff/Aspose 兼容链路。
         /// </summary>
-        public static bool TryReadArgbPixels(string imagePath, out int width, out int height, out int[] pixels)
+        public static bool TryReadArgbPixels(string imagePath, bool forceOpaqueFourChannel, out int width, out int height, out int[] pixels)
         {
             width = 0;
             height = 0;
@@ -61,7 +61,12 @@ namespace WindowsFormsApp1
                             green = sourceBytes[sourceOffset++];
                             red = sourceBytes[sourceOffset++];
                             if (channelCount == 4)
-                                alpha = sourceBytes[sourceOffset++];
+                            {
+                                byte fourthChannel = sourceBytes[sourceOffset++];
+                                // 部分 CMYK TIFF 经 OpenCV 解码后已是 BGR 颜色，但第 4 通道不是可靠的 Alpha。
+                                // 测试模式只强制其不透明，避免将彩色区域错误裁成透明；不再重复做 CMYK 颜色换算。
+                                alpha = forceOpaqueFourChannel ? byte.MaxValue : fourthChannel;
+                            }
                         }
 
                         pixels[index] = (alpha << 24) | (red << 16) | (green << 8) | blue;
