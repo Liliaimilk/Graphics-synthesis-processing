@@ -57,6 +57,7 @@ namespace WindowsFormsApp1
         public bool? Varnish { get; set; }
         public string Separator { get; set; }
         public string RawJson { get; set; }
+        public bool RequirePreExecutionConfirmation { get; set; }
 
         public string DisplayName
         {
@@ -622,6 +623,7 @@ namespace WindowsFormsApp1
                 MaterialFolder = settings.MaterialFolder,
                 SavePath = settings.SavePath,
                 MaterialNames = skuNames,
+                RequirePreExecutionConfirmation = true,
                 RawJson = "HTTP order scan: " + string.Join(", ", skuNames)
             };
 

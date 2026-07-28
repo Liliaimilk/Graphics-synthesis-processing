@@ -74,6 +74,8 @@ namespace WindowsFormsApp1
         private bool isRemoteMode;
         private BatchRunState batchState;
         private RemoteMergeRequest pendingRemoteRequest;
+        private BuildJobsResult preparedRemoteBuildResult;
+        private bool isPreparedRemoteRunConfirmed;
 
         private readonly List<ChannelControl> channelControls = new List<ChannelControl>();
         private int nextChannelNumber = 1;
@@ -167,6 +169,8 @@ namespace WindowsFormsApp1
         {
             pendingRemoteRequest = request;
             isRemoteMode = request != null;
+            preparedRemoteBuildResult = null;
+            isPreparedRemoteRunConfirmed = false;
             ResetDialogResultState();
 
             if (request == null)
@@ -213,6 +217,29 @@ namespace WindowsFormsApp1
             lblStatus.Text = $"远程请求已加载: {request.DisplayName}";
         }
 
+        /// <summary>
+        /// 在不显示套图窗口的情况下构建远程任务并完成未匹配确认。
+        /// 订单扫码流程确认后可直接执行已准备任务，避免再次匹配并避免用户先看到套图窗口。
+        /// </summary>
+        public bool TryPrepareRemoteRun()
+        {
+            if (isRunning || pendingRemoteRequest == null)
+                return false;
+
+            ResetDialogResultState();
+            BuildJobsResult buildResult = BuildJobsFromRemoteRequest(pendingRemoteRequest);
+            if (buildResult == null || !ConfirmRemoteUnmatchedJobs(buildResult))
+            {
+                preparedRemoteBuildResult = null;
+                isPreparedRemoteRunConfirmed = false;
+                return false;
+            }
+
+            preparedRemoteBuildResult = buildResult;
+            isPreparedRemoteRunConfirmed = true;
+            return true;
+        }
+
         public async Task<bool> StartRemoteRunAsync()
         {
             if (isRunning)
@@ -228,14 +255,20 @@ namespace WindowsFormsApp1
             }
 
             ResetDialogResultState();
-            BuildJobsResult buildResult = BuildJobsFromRemoteRequest(pendingRemoteRequest);
+            BuildJobsResult buildResult = preparedRemoteBuildResult;
+            bool skipUnmatchedConfirmation = isPreparedRemoteRunConfirmed && buildResult != null;
+            preparedRemoteBuildResult = null;
+            isPreparedRemoteRunConfirmed = false;
+
+            if (buildResult == null)
+                buildResult = BuildJobsFromRemoteRequest(pendingRemoteRequest);
             if (buildResult == null)
             {
                 pendingRemoteRequest = null;
                 return false;
             }
 
-            if (!ConfirmRemoteUnmatchedJobs(buildResult))
+            if (!skipUnmatchedConfirmation && !ConfirmRemoteUnmatchedJobs(buildResult))
             {
                 pendingRemoteRequest = null;
                 return false;

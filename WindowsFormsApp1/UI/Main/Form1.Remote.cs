@@ -309,7 +309,19 @@ namespace WindowsFormsApp1
 
                     EnsureRemoteDialog();
 
-                    bool completed = await RunRemoteRequestAsync(request);
+                    bool requestAlreadyApplied = false;
+                    if (request.RequirePreExecutionConfirmation)
+                    {
+                        activeRemoteDialog.ApplyRemoteRequest(request);
+                        requestAlreadyApplied = true;
+                        if (!activeRemoteDialog.TryPrepareRemoteRun())
+                        {
+                            lblStatus.Text = $"远程请求已取消: {activeRemoteDialog.GetStatusTextSnapshot()}";
+                            continue;
+                        }
+                    }
+
+                    bool completed = await RunRemoteRequestAsync(request, requestAlreadyApplied);
                     if (!completed && activeRemoteDialog != null)
                     {
                         lblStatus.Text = $"远程请求失败: {activeRemoteDialog.GetStatusTextSnapshot()}";
@@ -361,9 +373,12 @@ namespace WindowsFormsApp1
         /// <summary>
         /// 通过套图对话框执行单个远程请求。
         /// </summary>
-        private async Task<bool> RunRemoteRequestAsync(RemoteMergeRequest request)
+        private async Task<bool> RunRemoteRequestAsync(RemoteMergeRequest request, bool requestAlreadyApplied = false)
         {
-            activeRemoteDialog.ApplyRemoteRequest(request);
+            if (!requestAlreadyApplied)
+            {
+                activeRemoteDialog.ApplyRemoteRequest(request);
+            }
             if (!activeRemoteDialog.Visible)
             {
                 activeRemoteDialog.Show(this);
