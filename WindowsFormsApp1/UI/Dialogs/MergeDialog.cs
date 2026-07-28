@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Drawing;
 using System.IO;
 using System.Linq;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
@@ -102,6 +103,8 @@ namespace WindowsFormsApp1
             public string FaceName { get; set; }
             public string TemplateLayerName { get; set; }
             public string MaterialLayerName { get; set; }
+            public string RequestedTemplateName { get; set; }
+            public string RequestedMaterialName { get; set; }
             public MergeJobStatus Status { get; set; }
             public string Message { get; set; }
             public ListViewItem ListItem { get; set; }
@@ -227,6 +230,12 @@ namespace WindowsFormsApp1
             ResetDialogResultState();
             BuildJobsResult buildResult = BuildJobsFromRemoteRequest(pendingRemoteRequest);
             if (buildResult == null)
+            {
+                pendingRemoteRequest = null;
+                return false;
+            }
+
+            if (!ConfirmRemoteUnmatchedJobs(buildResult))
             {
                 pendingRemoteRequest = null;
                 return false;
@@ -378,16 +387,6 @@ namespace WindowsFormsApp1
                 return null;
             }
 
-            string ignoredTemplateName;
-            string ignoredMaterialName;
-            string ignoredError;
-            bool hasMatchedPairName = names.Any(name =>
-                TrySplitRemotePairName(name, templateFiles, out ignoredTemplateName, out ignoredMaterialName, out ignoredError));
-            if (!hasMatchedPairName)
-            {
-                return null;
-            }
-
             string separator = GetOutputSeparator();
             string ext = GetOutputExtension(format);
             var jobs = new List<MergeJobItem>();
@@ -400,21 +399,22 @@ namespace WindowsFormsApp1
                 string currentError;
                 if (!TrySplitRemotePairName(pairName, templateFiles, out templateName, out materialName, out currentError))
                 {
-                    jobs.Add(CreateUnmatchedRemoteJob(index++, pairName, "未匹配到模版: " + currentError));
+                    GetPairNameHints(pairName, materialFiles, out templateName, out materialName);
+                    jobs.Add(CreateUnmatchedRemoteJob(index++, pairName, "未匹配到模版: " + currentError, templateName, materialName));
                     continue;
                 }
 
                 string templateFile = ResolveSingleFileByBaseName(templateFiles, templateName, "模版", out currentError);
                 if (templateFile == null)
                 {
-                    jobs.Add(CreateUnmatchedRemoteJob(index++, pairName, "未匹配到模版: " + currentError));
+                    jobs.Add(CreateUnmatchedRemoteJob(index++, pairName, "未匹配到模版: " + currentError, templateName, materialName));
                     continue;
                 }
 
                 string materialFile = ResolveSingleFileByBaseName(materialFiles, materialName, "素材", out currentError);
                 if (materialFile == null)
                 {
-                    jobs.Add(CreateUnmatchedRemoteJob(index++, pairName, "未匹配到素材: " + currentError));
+                    jobs.Add(CreateUnmatchedRemoteJob(index++, pairName, "未匹配到素材: " + currentError, templateName, materialName));
                     continue;
                 }
 
@@ -449,16 +449,111 @@ namespace WindowsFormsApp1
         /// <summary>
         /// 将 WS 组合名匹配失败记录为可见的已跳过任务，避免影响同批其他组合继续执行。
         /// </summary>
-        private MergeJobItem CreateUnmatchedRemoteJob(int index, string pairName, string message)
+        private MergeJobItem CreateUnmatchedRemoteJob(
+            int index,
+            string pairName,
+            string message,
+            string requestedTemplateName = null,
+            string requestedMaterialName = null)
         {
             return new MergeJobItem
             {
                 Index = index,
                 DisplayName = pairName,
                 MaterialPath = pairName,
+                RequestedTemplateName = requestedTemplateName,
+                RequestedMaterialName = requestedMaterialName,
                 Status = MergeJobStatus.Skipped,
                 Message = message
             };
+        }
+
+        /// <summary>
+        /// 当无法匹配真实模板前缀时，仅用于提示用户的组合名拆分参考。
+        /// 实际套图仍完全依赖真实模板文件名进行精准匹配，不使用该参考值执行任务。
+        /// </summary>
+        private void GetPairNameHints(
+            string pairName,
+            IEnumerable<string> materialFiles,
+            out string templateName,
+            out string materialName)
+        {
+            string normalizedName = (pairName ?? string.Empty).Trim();
+            foreach (string currentMaterialName in (materialFiles ?? Enumerable.Empty<string>())
+                .Select(path => GetBaseName(path))
+                .Where(name => !string.IsNullOrWhiteSpace(name))
+                .OrderByDescending(name => name.Length))
+            {
+                string suffix = "_" + currentMaterialName;
+                if (normalizedName.EndsWith(suffix, StringComparison.OrdinalIgnoreCase) && normalizedName.Length > suffix.Length)
+                {
+                    templateName = normalizedName.Substring(0, normalizedName.Length - suffix.Length).Trim();
+                    materialName = currentMaterialName;
+                    return;
+                }
+            }
+
+            int separatorIndex = normalizedName.IndexOf('_');
+            if (separatorIndex <= 0 || separatorIndex >= normalizedName.Length - 1)
+            {
+                templateName = normalizedName;
+                materialName = "无法识别";
+                return;
+            }
+
+            templateName = normalizedName.Substring(0, separatorIndex).Trim();
+            materialName = normalizedName.Substring(separatorIndex + 1).Trim();
+        }
+
+        /// <summary>
+        /// 远程批量套图执行前汇总未匹配项。存在可执行任务时由用户决定是否跳过失败项继续；
+        /// 全部未匹配时仅提示退出，避免产生没有任何输出的空任务。
+        /// </summary>
+        private bool ConfirmRemoteUnmatchedJobs(BuildJobsResult buildResult)
+        {
+            List<MergeJobItem> skippedJobs = (buildResult?.Jobs ?? new List<MergeJobItem>())
+                .Where(job => job.Status == MergeJobStatus.Skipped)
+                .ToList();
+            if (skippedJobs.Count == 0)
+                return true;
+
+            int matchedCount = buildResult.Jobs.Count - skippedJobs.Count;
+            var message = new StringBuilder();
+            message.AppendLine($"已匹配任务: {matchedCount} 条");
+            message.AppendLine($"未匹配任务: {skippedJobs.Count} 条");
+            message.AppendLine();
+            message.AppendLine("未匹配明细:");
+
+            foreach (MergeJobItem job in skippedJobs)
+            {
+                string templateName = string.IsNullOrWhiteSpace(job.RequestedTemplateName) ? "无法识别" : job.RequestedTemplateName;
+                string materialName = string.IsNullOrWhiteSpace(job.RequestedMaterialName) ? "无法识别" : job.RequestedMaterialName;
+                message.AppendLine($"- 模版: {templateName} | 素材: {materialName}");
+                message.AppendLine($"  原因: {job.Message}");
+            }
+
+            if (matchedCount <= 0)
+            {
+                message.AppendLine();
+                message.Append("没有可执行的套图任务，已取消本次处理。");
+                MessageBox.Show(message.ToString(), "套图匹配失败", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                lblStatus.Text = "未找到可执行的模板和素材匹配任务";
+                return false;
+            }
+
+            message.AppendLine();
+            message.Append("是否跳过未匹配项并继续套图？");
+            DialogResult result = MessageBox.Show(
+                message.ToString(),
+                "套图匹配确认",
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Warning,
+                MessageBoxDefaultButton.Button1);
+            if (result == DialogResult.Yes)
+                return true;
+
+            lblStatus.Text = "用户取消了套图任务";
+            return false;
         }
 
         /// <summary>
