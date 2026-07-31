@@ -38,6 +38,7 @@ namespace WindowsFormsApp1
         private TextBox txtRows;
         private TextBox txtColumns;
         private TextBox txtScanInput;
+        private NumericUpDown nudRepeatCount;
         private Button btnBrowseSource;
         private Button btnBrowseOutput;
         private Button btnRefreshPreview;
@@ -311,6 +312,24 @@ namespace WindowsFormsApp1
             leftPanel.Controls.Add(txtScanInput);
             btnClearLoadedImages.BringToFront();
 
+            startY += rowHeight;
+            leftPanel.Controls.Add(CreateLabel("重复数量:", startX, startY + 3, 85));
+            nudRepeatCount = new NumericUpDown
+            {
+                Location = new Point(startX + 90, startY),
+                Size = new Size(100, 28),
+                Minimum = 1,
+                Maximum = 10000,
+                Value = 1,
+                Font = new Font("Microsoft YaHei", 9F),
+                BackColor = Color.FromArgb(58, 58, 58),
+                ForeColor = Color.FromArgb(220, 225, 235),
+                BorderStyle = BorderStyle.FixedSingle,
+                TextAlign = HorizontalAlignment.Center
+            };
+            leftPanel.Controls.Add(nudRepeatCount);
+            leftPanel.Controls.Add(CreateLabel("手动载入和扫码均按此数量追加", startX + 200, startY + 3, 290));
+
 
             // Status label
             startY += rowHeight + 12;
@@ -435,14 +454,25 @@ namespace WindowsFormsApp1
             }));
         }
         // 向图片文件列表追加文件；同一 TIFF 可重复占用多个格位。
-        private bool AppendImageFile(string path)
+        private int AppendImageFile(string path, int repeatCount)
         {
             if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
-                return false;
+                return 0;
 
             string fullPath = Path.GetFullPath(path);
-            currentImageFiles.Add(fullPath);
-            return true;
+            int count = Math.Max(1, repeatCount);
+            for (int index = 0; index < count; index++)
+            {
+                currentImageFiles.Add(fullPath);
+            }
+
+            return count;
+        }
+
+        // 获取当前手动载入和扫码共用的重复数量。
+        private int GetRepeatCount()
+        {
+            return nudRepeatCount == null ? 1 : Decimal.ToInt32(nudRepeatCount.Value);  
         }
 
         private static string NormalizeScanToken(string token)
@@ -578,11 +608,12 @@ namespace WindowsFormsApp1
                 return;
             }
 
-            if (AppendImageFile(matchedPath))
+            int addedCount = AppendImageFile(matchedPath, GetRepeatCount());
+            if (addedCount > 0)
             {
-                lblStatus.Text = $"已载入: {Path.GetFileName(matchedPath)}";
                 txtScanInput.Clear();
                 RefreshPreview("loaded");
+                lblStatus.Text = $"已载入 {Path.GetFileName(matchedPath)} × {addedCount}，待排版 {currentImageFiles.Count} 个";
                 FocusScanInput();
                 return;
             }
@@ -619,16 +650,17 @@ namespace WindowsFormsApp1
                     return;
                 }
 
-                bool changed = false;
+                int addedCount = 0;
+                int repeatCount = GetRepeatCount();
                 foreach (string selectedFile in selectedFiles)
                 {
-                    // 同一 TIFF 可被多次载入，排版时会依次填入不同格位。
-                    changed |= AppendImageFile(selectedFile);
+                    addedCount += AppendImageFile(selectedFile, repeatCount);
                 }
 
-                if (changed)
+                if (addedCount > 0)
                 {
                     RefreshPreview("loaded");
+                    lblStatus.Text = $"已载入 {selectedFiles.Count} 个文件 × {repeatCount}，待排版 {currentImageFiles.Count} 个";
                     FocusScanInput();
                 }
                 else
@@ -1228,6 +1260,8 @@ namespace WindowsFormsApp1
             btnPreviewAll.Enabled = !busy;
             loadTiffButton.Enabled = !busy;
             btnClearLoadedImages.Enabled = !busy;
+            if (nudRepeatCount != null)
+                nudRepeatCount.Enabled = !busy;
             if (txtScanInput != null)
                 txtScanInput.Enabled = !busy;
             btnRun.Text = busy ? "处理中..." : "开始排版输出";
