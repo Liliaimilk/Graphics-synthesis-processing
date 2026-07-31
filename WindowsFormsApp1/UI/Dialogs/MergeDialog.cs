@@ -212,7 +212,7 @@ namespace WindowsFormsApp1
             // {
             //     chkVarnish.Checked = request.Varnish.Value;
             // }
-
+            Console.WriteLine($"{request.MaterialNames}, material names");
             chkBatchMode.Checked = request.MaterialNames != null && request.MaterialNames.Count > 1;
             lblStatus.Text = $"远程请求已加载: {request.DisplayName}";
         }
@@ -313,6 +313,36 @@ namespace WindowsFormsApp1
             }
         }
 
+        /// <summary>
+        /// WS 单个套图在模板、素材或组合名无法匹配时，强制向操作员展示失败原因。
+        /// 普通远程状态提示仍保持静默，避免批量执行过程中出现大量无关弹窗。
+        /// </summary>
+        private void ShowRemoteMatchFailure(string statusText, string detail)
+        {
+            lblStatus.Text = statusText;
+            MessageBox.Show(detail, "套图匹配失败", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+
+        /// <summary>
+        /// 远程单条任务只要未能成功输出，就向操作员展示失败原因。
+        /// 批量任务继续通过任务表和汇总展示，避免逐条弹窗打断处理。
+        /// </summary>
+        private void ShowRemoteSingleJobFailure(BuildJobsResult buildResult, string statusText, string detail)
+        {
+            if (!isRemoteMode || buildResult?.Jobs == null)
+                return;
+
+            int materialCount = buildResult.Jobs
+                .Select(job => !string.IsNullOrWhiteSpace(job.MaterialPath) ? job.MaterialPath : job.DisplayName)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Count();
+            if (materialCount != 1)
+                return;
+
+            lblStatus.Text = statusText;
+            MessageBox.Show(detail, "套图失败", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+
         private bool ValidateSelectedFolders()
         {
             if (string.IsNullOrEmpty(txtTemplateFolder.Text) || !Directory.Exists(txtTemplateFolder.Text))
@@ -334,7 +364,7 @@ namespace WindowsFormsApp1
             return true;
         }
 
-    // 远程请求处理，构建任务列表
+        // 远程请求处理，构建任务列表
         private BuildJobsResult BuildJobsFromRemoteRequest(RemoteMergeRequest request)
         {
             if (!ValidateSelectedFolders())
@@ -343,7 +373,7 @@ namespace WindowsFormsApp1
             }
 
             string format = cmbFormat.SelectedItem?.ToString() ?? "TIF";
-            
+
             if (string.Equals(format, "PSD", StringComparison.OrdinalIgnoreCase))
             {
                 ShowStatusMessage("PSD 导出不支持", "当前版本暂不支持真实 PSD 导出，请改用 TIF、PNG 或 JPEG。", "提示", MessageBoxIcon.Warning);
@@ -360,7 +390,7 @@ namespace WindowsFormsApp1
 
             if (!string.IsNullOrWhiteSpace(pairedError))
             {
-                ShowStatusMessage("远程组合名匹配失败", pairedError, "错误", MessageBoxIcon.Error);
+                ShowRemoteMatchFailure("远程组合名匹配失败", pairedError);
                 return null;
             }
 
@@ -368,7 +398,7 @@ namespace WindowsFormsApp1
             string templateFile = ResolveRemoteTemplateFile(request, out templateError);
             if (templateFile == null)
             {
-                ShowStatusMessage("远程模版匹配失败,未找到素材", templateError, "错误", MessageBoxIcon.Error);
+                ShowRemoteMatchFailure("远程模版匹配失败", templateError);
                 return null;
             }
 
@@ -377,7 +407,7 @@ namespace WindowsFormsApp1
             List<string> materialFiles = ResolveMaterialsByNames(txtMaterialFolder.Text, request.MaterialNames, out materialError);
             if (materialFiles == null)
             {
-                ShowStatusMessage("远程素材匹配失败,未找到素材", materialError, "错误", MessageBoxIcon.Error);
+                ShowRemoteMatchFailure("远程素材匹配失败", materialError);
                 return null;
             }
 
@@ -465,7 +495,7 @@ namespace WindowsFormsApp1
             }
 
             TemplateCompositeMode compositeMode = TemplateCompositeMode.FullBleed;
-            return new BuildJobsResult
+            var buildResult = new BuildJobsResult
             {
                 IsBatchMode = jobs.Count > 1,
                 TemplateFile = jobs.FirstOrDefault(job => job.Status != MergeJobStatus.Skipped)?.TemplatePath,
@@ -477,6 +507,14 @@ namespace WindowsFormsApp1
                 Rotation = null,
                 Mirror = null
             };
+
+            // 未匹配任务不会进入预检或执行阶段，因此在构建完成后立即写入失败日志。
+            foreach (MergeJobItem unmatchedJob in jobs.Where(job => job.Status == MergeJobStatus.Skipped))
+            {
+                WriteMergeFailureLog(unmatchedJob, buildResult, "远程匹配", unmatchedJob.Message, null);
+            }
+
+            return buildResult;
         }
 
         /// <summary>
@@ -613,6 +651,7 @@ namespace WindowsFormsApp1
                 {
                     templateName = currentTemplateName;
                     materialName = normalizedPairName.Substring(prefix.Length).Trim();
+                    Console.WriteLine($"匹配组合名: {normalizedPairName} => 模版: {templateName}, 素材: {materialName}");
                     return true;
                 }
             }
@@ -1434,11 +1473,11 @@ namespace WindowsFormsApp1
                 {
                     channelControls.Remove(control);
                     // 重置通道计数
-                    if(channelControls.Count == 0)
+                    if (channelControls.Count == 0)
                     {
                         nextChannelNumber = 1;
-                    }   
-                    
+                    }
+
                 }
 
                 RefreshChannelNames();
@@ -1917,7 +1956,7 @@ namespace WindowsFormsApp1
                 materialFiles = new List<string> { materialFiles[0] };
             }
 
-            return BuildJobsCore(templateFile, materialFiles, isBatchMode, format,rotation,mirror);
+            return BuildJobsCore(templateFile, materialFiles, isBatchMode, format, rotation, mirror);
         }
 
         /// <summary>
@@ -2196,6 +2235,7 @@ namespace WindowsFormsApp1
                 {
                     string message = $"模版预检失败: {templateValidation.ErrorMessage}";
                     invalidMessages.Add($"{Path.GetFileName(job.TemplatePath)}: {message}");
+                    WriteMergeFailureLog(job, buildResult, "预检", message, null);
                     if (buildResult.IsBatchMode)
                     {
                         UpdateJobStatus(job, MergeJobStatus.Skipped, message);
@@ -2211,6 +2251,7 @@ namespace WindowsFormsApp1
                     {
                         string message = $"模板图层“{job.TemplateLayerName}”预检失败: {templateLayerError}";
                         invalidMessages.Add($"{Path.GetFileName(job.TemplatePath)}: {message}");
+                        WriteMergeFailureLog(job, buildResult, "预检", message, null);
                         if (buildResult.IsBatchMode)
                         {
                             UpdateJobStatus(job, MergeJobStatus.Skipped, message);
@@ -2231,6 +2272,7 @@ namespace WindowsFormsApp1
                         {
                             string message = $"素材图层“{job.MaterialLayerName}”预检失败: {materialLayerError}";
                             invalidMessages.Add($"{Path.GetFileName(job.MaterialPath)}: {message}");
+                            WriteMergeFailureLog(job, buildResult, "预检", message, null);
                             if (buildResult.IsBatchMode)
                             {
                                 UpdateJobStatus(job, MergeJobStatus.Skipped, message);
@@ -2251,6 +2293,7 @@ namespace WindowsFormsApp1
                 {
                     string message = validation.ErrorMessage ?? "无法读取或格式不兼容";
                     invalidMessages.Add($"{Path.GetFileName(job.MaterialPath)}: {message}");
+                    WriteMergeFailureLog(job, buildResult, "预检", message, null);
                     if (buildResult.IsBatchMode)
                     {
                         UpdateJobStatus(job, MergeJobStatus.Skipped, message);
@@ -2261,11 +2304,13 @@ namespace WindowsFormsApp1
 
             if (invalidMessages.Count > 0)
             {
+                string detail = "以下素材预检失败，将自动跳过：\n" + string.Join("\n", invalidMessages);
                 ShowStatusMessage(
                     $"预检完成，跳过 {invalidMessages.Count} 个素材",
-                    "以下素材预检失败，将自动跳过：\n" + string.Join("\n", invalidMessages),
+                    detail,
                     "预检提示",
                     MessageBoxIcon.Warning);
+                ShowRemoteSingleJobFailure(buildResult, "套图预检失败", detail);
             }
 
             return validJobs;
@@ -2371,7 +2416,10 @@ namespace WindowsFormsApp1
                 {
                     invalidMessages.Add($"{Path.GetFileName(firstJob.MaterialPath)}: {errorMessage}");
                     foreach (MergeJobItem job in materialJobs)
+                    {
+                        WriteMergeFailureLog(job, buildResult, "双面预检", errorMessage, null);
                         UpdateJobStatus(job, MergeJobStatus.Skipped, "同一素材的正反面已整体跳过: " + errorMessage);
+                    }
                 }
 
                 if (buildResult.IsBatchMode)
@@ -2380,11 +2428,13 @@ namespace WindowsFormsApp1
 
             if (invalidMessages.Count > 0)
             {
+                string detail = "以下素材的正反面任务未通过预检，将整体跳过：\n" + string.Join("\n", invalidMessages);
                 ShowStatusMessage(
                     $"双面预检完成，跳过 {invalidMessages.Count} 个素材",
-                    "以下素材的正反面任务未通过预检，将整体跳过：\n" + string.Join("\n", invalidMessages),
+                    detail,
                     "预检提示",
                     MessageBoxIcon.Warning);
+                ShowRemoteSingleJobFailure(buildResult, "双面套图预检失败", detail);
             }
 
             return validJobs;
@@ -2512,6 +2562,7 @@ namespace WindowsFormsApp1
                             log += $"INNER {ex.InnerException.GetType().FullName}: {ex.InnerException.Message}{Environment.NewLine}{ex.InnerException.StackTrace}{Environment.NewLine}";
                         }
                         Console.WriteLine(log);
+                        WriteMergeFailureLog(job, buildResult, "执行套图", detail, ex);
                         UpdateJobStatus(job, MergeJobStatus.Failed, detail);
                         lblStatus.Text = $"处理失败: {Path.GetFileName(job.MaterialPath)} - {detail}";
                     }
@@ -2551,7 +2602,9 @@ namespace WindowsFormsApp1
                     }
                     else
                     {
-                        ShowStatusMessage("套图失败", "套图失败，请检查输入素材或结果消息。", "错误", MessageBoxIcon.Error);
+                        const string failureMessage = "套图失败，请检查输入素材或结果消息。";
+                        ShowStatusMessage("套图失败", failureMessage, "错误", MessageBoxIcon.Error);
+                        ShowRemoteSingleJobFailure(buildResult, "套图失败", failureMessage);
                     }
                 }
                 else
@@ -2578,6 +2631,46 @@ namespace WindowsFormsApp1
                 batchState = null;
                 SetBusyState(false);
             }
+        }
+
+        /// <summary>
+        /// 将界面任务和本次套图配置转换为独立日志服务需要的失败上下文。
+        /// </summary>
+        private void WriteMergeFailureLog(
+            MergeJobItem job,
+            BuildJobsResult buildResult,
+            string stage,
+            string failureMessage,
+            Exception exception)
+        {
+            string templateName = !string.IsNullOrWhiteSpace(job?.RequestedTemplateName)
+                ? job.RequestedTemplateName
+                : !string.IsNullOrWhiteSpace(job?.TemplatePath)
+                    ? Path.GetFileName(job.TemplatePath)
+                    : "未识别";
+            string materialName = !string.IsNullOrWhiteSpace(job?.RequestedMaterialName)
+                ? job.RequestedMaterialName
+                : !string.IsNullOrWhiteSpace(job?.MaterialPath)
+                    ? Path.GetFileName(job.MaterialPath)
+                    : "未识别";
+
+            MergeFailureLogger.Write(new MergeFailureLogEntry
+            {
+                Stage = stage,
+                TaskName = job?.DisplayName,
+                TemplateName = templateName,
+                TemplatePath = job?.TemplatePath,
+                MaterialName = materialName,
+                MaterialPath = job?.MaterialPath,
+                TemplateLayerName = job?.TemplateLayerName,
+                MaterialLayerName = job?.MaterialLayerName,
+                OutputPath = job?.OutputPath,
+                OutputFormat = buildResult?.Format,
+                CompositeModeName = buildResult?.CompositeModeName,
+                IsDoubleSided = buildResult?.IsDoubleSided,
+                FailureMessage = failureMessage,
+                Exception = exception
+            });
         }
 
         private async void BtnMerge_Click(object sender, EventArgs e)
