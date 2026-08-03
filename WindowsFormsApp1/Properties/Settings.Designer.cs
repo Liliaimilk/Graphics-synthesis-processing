@@ -71,5 +71,65 @@ namespace WindowsFormsApp1.Properties
                 this["SavePath"] = value;
             }
         }
+
+        [global::System.Configuration.UserScopedSettingAttribute()]
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
+        [global::System.Configuration.DefaultSettingValueAttribute("")]
+        public string LastLoginUsername
+        {
+            get
+            {
+                return ((string)(this["LastLoginUsername"]));
+            }
+            set
+            {
+                this["LastLoginUsername"] = value;
+            }
+        }
+
+        [global::System.Configuration.UserScopedSettingAttribute()]
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
+        [global::System.Configuration.DefaultSettingValueAttribute("False")]
+        public bool RememberPassword
+        {
+            get
+            {
+                return ((bool)(this["RememberPassword"]));
+            }
+            set
+            {
+                this["RememberPassword"] = value;
+            }
+        }
+
+        [global::System.Configuration.UserScopedSettingAttribute()]
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
+        [global::System.Configuration.DefaultSettingValueAttribute("")]
+        public string EncryptedPassword
+        {
+            get
+            {
+                return ((string)(this["EncryptedPassword"]));
+            }
+            set
+            {
+                this["EncryptedPassword"] = value;
+            }
+        }
+
+        [global::System.Configuration.UserScopedSettingAttribute()]
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
+        [global::System.Configuration.DefaultSettingValueAttribute("")]
+        public int UserId
+        {
+            get
+            {
+                return ((int)(this["UserId"]));
+            }
+            set
+            {
+                this["UserId"] = value;
+            }
+        }
     }
 }

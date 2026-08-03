@@ -18,11 +18,16 @@ namespace WindowsFormsApp1
         [STAThread]
         static void Main()
         {
-            
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
+
+            using (var loginDialog = new LoginDialog())
+            {
+                if (loginDialog.ShowDialog() != DialogResult.OK)
+                    return;
+            }
+
             Application.Run(new Form1());
-           
         }
     }
 }

@@ -86,6 +86,7 @@
     <Reference Include="System.Drawing" />
     <Reference Include="System.Net.Http" />
     <Reference Include="System.Runtime.Serialization" />
+    <Reference Include="System.Security" />
     <Reference Include="System.Windows.Forms" />
     <Reference Include="System.Xml" />
   </ItemGroup>
@@ -97,12 +98,17 @@
     <Compile Include="Services\Imaging\AsposePSDHelper.cs" />
     <Compile Include="Services\Imaging\OpenCvMergeRenderer.cs" />
     <Compile Include="Services\Imaging\PhotoshopTiffLayerParser.cs" />
+    <Compile Include="Services\Http\LoginService.cs" />
     <Compile Include="Services\Logging\MergeFailureLogger.cs" />
+    <Compile Include="Services\Security\LoginCredentialStore.cs" />
     <Compile Include="Services\Layout\OpenCvLayoutRenderer.cs" />
     <Compile Include="UI\Dialogs\LayoutOutputDialog.cs">
       <SubType>Form</SubType>
     </Compile>
     <Compile Include="UI\Dialogs\MergeDialog.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="UI\Dialogs\LoginDialog.cs">
       <SubType>Form</SubType>
     </Compile>
     <Compile Include="Models\UI\UiModels.cs" />
