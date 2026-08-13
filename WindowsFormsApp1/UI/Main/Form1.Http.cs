@@ -14,7 +14,7 @@ namespace WindowsFormsApp1
     public partial class Form1
     {
         private const int DefaultHttpTimeoutSeconds = 30;
-        private const string OrderScanResultEndpoint = "http://192.168.0.222:8080/open-api/orders/scan-result";
+        private const string OrderScanResultEndpoint = "http://127.0.0.1:8080/open-api/orders/scan-result";
 
         // HttpClient 应在窗体生命周期内复用，避免每次请求重复创建连接和耗尽端口。
         private static readonly HttpClient SharedHttpClient = CreateHttpClient();

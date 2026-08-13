@@ -75,7 +75,7 @@ namespace WindowsFormsApp1
 
     public partial class Form1 : Form
     {
-        private const string RemoteWebSocketEndpoint = "ws://localhost:8080/websocket/2";
+        private const string RemoteWebSocketEndpointPrefix = "ws://192.168.0.115:8080/websocket/";
 
         private RulerCanvas canvas;
         private Panel workspacePanel;
@@ -107,6 +107,21 @@ namespace WindowsFormsApp1
         private Task remoteWebSocketReceiveTask;
         private bool isProcessingRemoteQueue;
         private MergeDialog activeRemoteDialog;
+
+        /// <summary>
+        /// 使用本次登录接口返回并保存的用户 ID 构造专属远程 WebSocket 地址。
+        /// </summary>
+        private string RemoteWebSocketEndpoint
+        {
+            get
+            {
+                int userId = Properties.Settings.Default.UserId;
+                if (userId <= 0)
+                    throw new InvalidOperationException("当前登录用户无效，无法建立远程连接。");
+
+                return RemoteWebSocketEndpointPrefix + userId;
+            }
+        }
 
         public Form1()
         {
