@@ -98,6 +98,9 @@
     <Compile Include="Services\Imaging\AsposePSDHelper.cs" />
     <Compile Include="Services\Imaging\OpenCvMergeRenderer.cs" />
     <Compile Include="Services\Imaging\PhotoshopTiffLayerParser.cs" />
+    <Compile Include="Services\Http\ApiClient.cs" />
+    <Compile Include="Services\Http\ApiEndpoints.cs" />
+    <Compile Include="Services\Http\BoardScanService.cs" />
     <Compile Include="Services\Http\LoginService.cs" />
     <Compile Include="Services\Logging\MergeFailureLogger.cs" />
     <Compile Include="Services\Security\LoginCredentialStore.cs" />
