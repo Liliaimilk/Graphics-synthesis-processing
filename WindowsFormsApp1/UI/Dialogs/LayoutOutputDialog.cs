@@ -579,8 +579,10 @@ namespace WindowsFormsApp1
             return rawInput;
         }
 
-        // 监听到enter后载入
-        private void TxtScanInput_KeyDown(object sender, KeyEventArgs e)
+        /// <summary>
+        /// 扫码后先向服务端校验标签码，仅在返回成功 SKU 后才匹配本地图片并追加预览。
+        /// </summary>
+        private async void TxtScanInput_KeyDown(object sender, KeyEventArgs e)
         {
             if (e.KeyCode != Keys.Enter)
                 return;
@@ -596,31 +598,64 @@ namespace WindowsFormsApp1
                 return;
             }
 
-            // 优先尝试从 JSON 对象中提取名称
-            string scanToken = ExtractNameFromScanInput(rawInput);
-
-            if (!TryResolveScannedFile(scanToken, out string matchedPath, out string errorMessage))
+            txtScanInput.Enabled = false;
+            try
             {
-                lblStatus.Text = errorMessage;
-                txtScanInput.SelectAll();
-                txtScanInput.Clear();
-                FocusScanInput();
-                return;
-            }
+                lblStatus.Text = "正在校验标签码...";
+                BoardScanResult scanResult = await BoardScanService.ScanAsync(rawInput);
+                if (scanResult.Code != 200)
+                {
+                    string message = string.IsNullOrWhiteSpace(scanResult.Message) ? "标签码校验失败。" : scanResult.Message;
+                    lblStatus.Text = message;
+                    MessageBox.Show(message, "扫码失败", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    txtScanInput.SelectAll();
+                    return;
+                }
 
-            int addedCount = AppendImageFile(matchedPath, GetRepeatCount());
-            if (addedCount > 0)
-            {
+                string skuName = NormalizeScanToken(scanResult.SkuName);
+                if (string.IsNullOrWhiteSpace(skuName))
+                {
+                    const string message = "标签码校验成功，但接口未返回 SKU 名称。";
+                    lblStatus.Text = message;
+                    MessageBox.Show(message, "扫码失败", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
+                }
+
+                if (!TryResolveScannedFile(skuName, out string matchedPath, out string errorMessage))
+                {
+                    string message = $"SKU：{skuName}\n{errorMessage}";
+                    lblStatus.Text = errorMessage;
+                    MessageBox.Show(message, "图片匹配失败", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
+                }
+
+                int addedCount = AppendImageFile(matchedPath, GetRepeatCount());
+                if (addedCount <= 0)
+                {
+                    string message = $"载入失败: {Path.GetFileName(matchedPath)}";
+                    lblStatus.Text = message;
+                    MessageBox.Show(message, "载入失败", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
+                }
+
                 txtScanInput.Clear();
                 RefreshPreview("loaded");
                 lblStatus.Text = $"已载入 {Path.GetFileName(matchedPath)} × {addedCount}，待排版 {currentImageFiles.Count} 个";
-                FocusScanInput();
-                return;
             }
-
-            lblStatus.Text = $"载入失败: {Path.GetFileName(matchedPath)}";
-            txtScanInput.Clear();
-            FocusScanInput();
+            catch (Exception ex)
+            {
+                string message = "标签码校验请求失败: " + ex.Message;
+                lblStatus.Text = message;
+                MessageBox.Show(message, "扫码失败", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
+            finally
+            {
+                if (!IsDisposed && txtScanInput != null)
+                {
+                    txtScanInput.Enabled = true;
+                    FocusScanInput();
+                }
+            }
         }
 
         // 手动载入tiff
