@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Net;
 using System.Net.Http;
+using System.Net.Http.Headers;
 using System.Runtime.Serialization.Json;
 using System.Text;
 using System.Threading;
@@ -16,6 +17,15 @@ namespace WindowsFormsApp1
     {
         private const int TimeoutSeconds = 30;
         private static readonly HttpClient HttpClient = CreateHttpClient();
+        private static string bearerToken;
+
+        /// <summary>
+        /// 保存本次登录会话的 Bearer Token，供需要鉴权的接口显式使用。
+        /// </summary>
+        public static void SetBearerToken(string token)
+        {
+            bearerToken = string.IsNullOrWhiteSpace(token) ? null : token.Trim();
+        }
 
         /// <summary>
         /// 发起 GET 请求，并将 JSON 响应反序列化为指定类型。
@@ -29,10 +39,10 @@ namespace WindowsFormsApp1
         /// <summary>
         /// 发起 JSON POST 请求，并将 JSON 响应反序列化为指定类型。
         /// </summary>
-        public static async Task<TResponse> PostAsync<TRequest, TResponse>(string path, TRequest body)
+        public static async Task<TResponse> PostAsync<TRequest, TResponse>(string path, TRequest body, bool includeBearerToken = false)
         {
             string requestJson = Serialize(body);
-            string responseJson = await SendAsync(HttpMethod.Post, BuildUrl(path, null), requestJson);
+            string responseJson = await SendAsync(HttpMethod.Post, BuildUrl(path, null), requestJson, includeBearerToken);
             return Deserialize<TResponse>(responseJson);
         }
 
@@ -51,13 +61,21 @@ namespace WindowsFormsApp1
         /// <summary>
         /// 发送 HTTP 请求并将网络、超时和非成功状态转换为可展示异常。
         /// </summary>
-        private static async Task<string> SendAsync(HttpMethod method, string requestUrl, string jsonBody)
+        private static async Task<string> SendAsync(HttpMethod method, string requestUrl, string jsonBody, bool includeBearerToken = false)
         {
             using (var request = new HttpRequestMessage(method, requestUrl))
             using (var timeoutSource = new CancellationTokenSource(TimeSpan.FromSeconds(TimeoutSeconds)))
             {
                 if (!string.IsNullOrWhiteSpace(jsonBody))
                     request.Content = new StringContent(jsonBody, Encoding.UTF8, "application/json");
+
+                if (includeBearerToken)
+                {
+                    if (string.IsNullOrWhiteSpace(bearerToken))
+                        throw new InvalidOperationException("当前登录会话缺少访问令牌，请重新登录。");
+
+                    request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", bearerToken);
+                }
 
                 try
                 {

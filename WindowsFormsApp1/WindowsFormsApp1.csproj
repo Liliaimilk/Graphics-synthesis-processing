@@ -125,10 +125,7 @@
     <Compile Include="UI\Main\Form1.Remote.cs">
       <SubType>Form</SubType>
     </Compile>
-    <Compile Include="UI\Main\Form1.Http.cs">
-      <DependentUpon>Form1.cs</DependentUpon>
-      <SubType>Form</SubType>
-    </Compile>
+   
     <Compile Include="UI\Main\Form1.Designer.cs">
       <DependentUpon>Form1.cs</DependentUpon>
     </Compile>

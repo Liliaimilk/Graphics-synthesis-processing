@@ -131,5 +131,20 @@ namespace WindowsFormsApp1.Properties
                 this["UserId"] = value;
             }
         }
+
+        [global::System.Configuration.UserScopedSettingAttribute()]
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
+        [global::System.Configuration.DefaultSettingValueAttribute("")]
+        public string EncryptedAccessToken
+        {
+            get
+            {
+                return ((string)(this["EncryptedAccessToken"]));
+            }
+            set
+            {
+                this["EncryptedAccessToken"] = value;
+            }
+        }
     }
 }

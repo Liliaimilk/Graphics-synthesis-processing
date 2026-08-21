@@ -60,7 +60,8 @@ namespace WindowsFormsApp1
 
             BoardScanResponse response = await ApiClient.PostAsync<BoardScanRequest, BoardScanResponse>(
                 ApiEndpoints.ScanBoard,
-                new BoardScanRequest { LabelCode = labelCode.Trim() });
+                new BoardScanRequest { LabelCode = labelCode.Trim() },
+                includeBearerToken: true);
             if (response == null)
                 throw new InvalidOperationException("标签码接口未返回有效数据。");
 

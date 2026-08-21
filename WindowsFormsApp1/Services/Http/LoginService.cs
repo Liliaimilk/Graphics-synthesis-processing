@@ -15,6 +15,9 @@ namespace WindowsFormsApp1
 
         [DataMember(Name = "username")]
         public string Username { get; set; }
+
+        [DataMember(Name = "token")]
+        public string Token { get; set; }
     }
 
     /// <summary>
@@ -68,7 +71,10 @@ namespace WindowsFormsApp1
                 throw new InvalidOperationException(string.IsNullOrWhiteSpace(loginResponse.Message) ? "登录失败。" : loginResponse.Message);
             if (loginResponse.Data == null || string.IsNullOrWhiteSpace(loginResponse.Data.Username))
                 throw new InvalidOperationException("登录接口未返回有效用户信息。");
+            if (string.IsNullOrWhiteSpace(loginResponse.Data.Token))
+                throw new InvalidOperationException("登录接口未返回访问令牌。");
 
+            ApiClient.SetBearerToken(loginResponse.Data.Token);
             return loginResponse.Data;
         }
     }

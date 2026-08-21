@@ -95,7 +95,6 @@ namespace WindowsFormsApp1
         private Button btnLayoutOutputTool;
         private Button btnMoveTool;
         private ToolTip toolbarToolTip;
-        private TextBox scanInputBox;
 
         private TrackBar zoomTrackBar;
         private Label zoomLabel;
@@ -395,9 +394,9 @@ namespace WindowsFormsApp1
             TableLayoutPanel metricGrid = new TableLayoutPanel
             {
                 Dock = DockStyle.Top,
-                Height = 300,
+                Height = 220,
                 ColumnCount = 2,
-                RowCount = 4,
+                RowCount = 3,
                 BackColor = Color.Transparent,
                 Margin = new Padding(0)
             };
@@ -406,15 +405,12 @@ namespace WindowsFormsApp1
             metricGrid.RowStyles.Add(new RowStyle(SizeType.Absolute, 66F));
             metricGrid.RowStyles.Add(new RowStyle(SizeType.Absolute, 66F));
             metricGrid.RowStyles.Add(new RowStyle(SizeType.Absolute, 76F));
-            metricGrid.RowStyles.Add(new RowStyle(SizeType.Absolute, 76F));
             metricGrid.Controls.Add(CreateMetricCard("W", "px", out lblSelectedWidthPx), 0, 0);
             metricGrid.Controls.Add(CreateMetricCard("H", "px", out lblSelectedHeightPx), 1, 0);
             metricGrid.Controls.Add(CreateMetricCard("宽度", "mm", out lblSelectedWidthMm), 0, 1);
             metricGrid.Controls.Add(CreateMetricCard("高度", "mm", out lblSelectedHeightMm), 1, 1);
             metricGrid.Controls.Add(CreateWideMetricCard("DPI", out lblSelectedDpi), 0, 2);
-            metricGrid.Controls.Add(CreateScanInputPanel(out scanInputBox), 0, 3);
             metricGrid.SetColumnSpan(metricGrid.GetControlFromPosition(0, 2), 2);
-            metricGrid.SetColumnSpan(metricGrid.GetControlFromPosition(0, 3), 2);
 
             // DockStyle.Top 的控件按从下往上的顺序添加，最终显示顺序才稳定。
             rightInfoPanel.Controls.Add(metricGrid);
@@ -494,156 +490,6 @@ namespace WindowsFormsApp1
             };
             card.Controls.Add(valueLabel);
             return card;
-        }
-
-        // 创建一个扫码套图输入框，用于接收扫码订单号获取套图信息
-        private Panel CreateScanInputPanel(out TextBox scanInputBox)
-        {
-            Panel scanPanel = new Panel
-            {
-                Dock = DockStyle.Fill,
-                BackColor = Color.FromArgb(41, 53, 77),
-                Margin = new Padding(6)
-            };
-
-            Label scanLabel = new Label
-            {
-                Text = "扫码套图",
-                AutoSize = false,
-                Location = new Point(12, 10),
-                Size = new Size(80, 28),
-                Font = new Font("微软雅黑", 9F),
-                ForeColor = Color.FromArgb(176, 186, 198)
-            };
-            scanPanel.Controls.Add(scanLabel);
-
-            scanInputBox = new TextBox
-            {
-                Location = new Point(12, 45),
-                Size = new Size(200, 28),
-                Font = new Font("微软雅黑", 9F),
-                BackColor = Color.FromArgb(58, 58, 58),
-                ForeColor = Color.FromArgb(220, 225, 235),
-                BorderStyle = BorderStyle.FixedSingle
-            };
-            // 监听回车键事件，触发扫码处理逻辑
-            scanInputBox.KeyDown += ScanInputBox_KeyDown;
-            scanPanel.Controls.Add(scanInputBox);
-
-            return scanPanel;
-        }
-
-        // 扫码枪通常以回车结尾；收到订单号后异步查询订单信息，避免阻塞主界面。
-        private async void ScanInputBox_KeyDown(object sender, KeyEventArgs e)
-        {
-            if (e.KeyCode != Keys.Enter)
-                return;
-
-            e.SuppressKeyPress = true;
-            TextBox inputBox = sender as TextBox;
-            string orderNumber = inputBox?.Text?.Trim();
-            if (string.IsNullOrWhiteSpace(orderNumber))
-            {
-                UpdateStatusSafely("请输入订单号后再查询");
-                return;
-            }
-
-            try
-            {
-                inputBox.Enabled = false;
-                UpdateStatusSafely($"正在查询订单: {orderNumber}");
-                List<OrderScanResult> orderResults = await GetOrderScanResultsAsync(orderNumber);
-                latestOrderScanResults = orderResults;
-                inputBox.Clear();
-                if (ShowOrderMergeConfirmation(orderResults))
-                {
-                    QueueOrderMergeJobs(orderResults);
-                }
-                // else
-                // {
-                //     UpdateStatusSafely(BuildOrderStatusText(orderResults));
-                // }
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"订单查询失败: {ex.Message}");
-                UpdateStatusSafely($"订单查询失败: {ex.Message}");
-            }
-            finally
-            {
-                if (inputBox != null && !inputBox.IsDisposed)
-                {
-                    inputBox.Enabled = true;
-                    inputBox.Focus();
-                }
-            }
-        }
-
-        /// <summary>
-        /// 展示扫码订单的全部 SKU，并让操作员确认是否进入现有套图流程。
-        /// </summary>
-        private bool ShowOrderMergeConfirmation(IReadOnlyList<OrderScanResult> orderResults)
-        {
-            if (orderResults == null || orderResults.Count == 0)
-                return false;
-
-            string orderNumber = orderResults[0].OrderNumber;
-            var message = new StringBuilder();
-            message.AppendLine($"订单号: {orderNumber}");
-            message.AppendLine($"SKU 数量: {orderResults.Count}");
-            message.AppendLine();
-            message.AppendLine("订单明细:");
-
-            for (int index = 0; index < orderResults.Count; index++)
-            {
-                OrderScanResult item = orderResults[index];
-                string skuName = string.IsNullOrWhiteSpace(item.SkuName) ? "未返回 SKU 名称" : item.SkuName;
-                message.AppendLine($"{index + 1}. {skuName}");
-            }
-
-            message.AppendLine();
-            message.Append("是否确认进入套图？");
-
-            return MessageBox.Show(
-                message.ToString(),
-                "订单信息确认",
-                MessageBoxButtons.YesNo,
-                MessageBoxIcon.Question,
-                MessageBoxDefaultButton.Button1) == DialogResult.Yes;
-        }
-
-        /// <summary>
-        /// 将订单 SKU 作为“模板名_素材名”组合名加入既有远程套图队列。
-        /// 具体的下划线拆分和文件精准匹配由 WS 流程中的 BuildJobsFromRemotePairNames 统一处理，
-        /// 避免模板或素材名称自身包含下划线时被简单 Split 误拆。
-        /// </summary>
-        private void QueueOrderMergeJobs(IEnumerable<OrderScanResult> orderResults)
-        {
-            List<string> skuNames = (orderResults ?? Enumerable.Empty<OrderScanResult>())
-                .Where(item => item != null && !string.IsNullOrWhiteSpace(item.SkuName))
-                .Select(item => item.SkuName.Trim())
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .ToList();
-
-            if (skuNames.Count == 0)
-            {
-                UpdateStatusSafely("订单中没有可用于套图的 SKU 名称");
-                return;
-            }
-
-            var settings = Properties.Settings.Default;
-            var request = new RemoteMergeRequest
-            {
-                TemplateFolder = settings.TemplateFolder,
-                MaterialFolder = settings.MaterialFolder,
-                SavePath = settings.SavePath,
-                MaterialNames = skuNames,
-                RequirePreExecutionConfirmation = true,
-                RawJson = "HTTP order scan: " + string.Join(", ", skuNames)
-            };
-
-            UpdateStatusSafely($"订单已确认，正在提交 {skuNames.Count} 个套图任务...");
-            QueueRemoteMergeRequest(request);
         }
 
         /// <summary>

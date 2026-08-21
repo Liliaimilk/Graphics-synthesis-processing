@@ -5,7 +5,7 @@ namespace WindowsFormsApp1
     /// </summary>
     internal static class ApiEndpoints
     {
-        public const string ServiceBaseUrl = "http://127.0.0.1:8080";
+        public const string ServiceBaseUrl = "http://192.168.0.115:8080";
         public const string Login = "/api/factory-client/login";
         public const string OrderScanResult = "/open-api/orders/scan-result";
         public const string ScanBoard = "/open-api/fulfillment/scan-board";

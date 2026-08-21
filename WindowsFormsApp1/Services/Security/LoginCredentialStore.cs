@@ -14,6 +14,7 @@ namespace WindowsFormsApp1
         public bool RememberPassword { get; set; }
 
         public int UserId { get; set; }
+        public string Token { get; set; }
     }
 
     /// <summary>
@@ -31,7 +32,8 @@ namespace WindowsFormsApp1
             {
                 Username = settings.LastLoginUsername ?? string.Empty,
                 RememberPassword = settings.RememberPassword,
-                UserId = settings.UserId
+                UserId = settings.UserId,
+                Token = UnprotectValue(settings.EncryptedAccessToken)
             };
 
             if (!credentials.RememberPassword || string.IsNullOrWhiteSpace(settings.EncryptedPassword))
@@ -61,6 +63,7 @@ namespace WindowsFormsApp1
             settings.LastLoginUsername = username?.Trim() ?? string.Empty;
             settings.RememberPassword = rememberPassword;
             settings.UserId = res.UserId;
+            settings.EncryptedAccessToken = ProtectValue(res.Token);
             if (rememberPassword && !string.IsNullOrEmpty(password))
             {
                 byte[] passwordBytes = Encoding.UTF8.GetBytes(password);
@@ -73,6 +76,38 @@ namespace WindowsFormsApp1
             }
 
             settings.Save();
+        }
+
+        /// <summary>
+        /// 使用当前 Windows 用户的 DPAPI 加密敏感字符串。
+        /// </summary>
+        private static string ProtectValue(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+                return string.Empty;
+
+            byte[] bytes = Encoding.UTF8.GetBytes(value);
+            return Convert.ToBase64String(ProtectedData.Protect(bytes, null, DataProtectionScope.CurrentUser));
+        }
+
+        /// <summary>
+        /// 解密敏感字符串；无效或过期的数据返回空值，不影响后续重新登录。
+        /// </summary>
+        private static string UnprotectValue(string encryptedValue)
+        {
+            if (string.IsNullOrWhiteSpace(encryptedValue))
+                return string.Empty;
+
+            try
+            {
+                byte[] encryptedBytes = Convert.FromBase64String(encryptedValue);
+                byte[] bytes = ProtectedData.Unprotect(encryptedBytes, null, DataProtectionScope.CurrentUser);
+                return Encoding.UTF8.GetString(bytes);
+            }
+            catch (Exception ex) when (ex is FormatException || ex is CryptographicException)
+            {
+                return string.Empty;
+            }
         }
 
         /// <summary>
